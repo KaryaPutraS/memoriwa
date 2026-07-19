@@ -152,8 +152,8 @@ function App() {
           <section className="metrics"><M n={flt.length} l="Files" c="lime" /><M n={flt.filter((d: Doc) => d.status === 'unanalyzed').length} l="Pending" /><M n={flt.filter((d: Doc) => d.status === 'analyzed').length} l="Analyzed" c="yellow" /><M n={flt.filter((d: Doc) => d.status === 'failed').length} l="Failed" c="red" /></section>
           <section className="toolbar"><div className="search"><Search size={18} /><input placeholder="Search..." value={query} onChange={e => setQuery(e.target.value)} /></div>{['All', 'PDF', 'IMAGE', 'DOCX'].map(x => <button key={x} className={filter === x ? 'chip selected' : 'chip'} onClick={() => setFilter(x)}>{x}</button>)}</section>
           <section className="table-card"><div className="table-head"><b>DOCUMENTS <span>{flt.length}</span></b>{sel.length > 0 && <button className="button red" onClick={() => sel.forEach(id => az(id))}><Sparkles size={16} /> Analyze ({sel.length})</button>}</div>
-            {flt.length === 0 && <div style={{ padding: 30, textAlign: 'center', color: '#999', fontWeight: 700 }}>No documents yet.</div>}
-            {flt.map(d => <div className="row" key={d.id}><input type="checkbox" checked={sel.includes(d.id)} onChange={() => setSel(s => s.includes(d.id) ? s.filter(x => x !== d.id) : [...s, d.id])} /><div className="fileicon"><FileText size={20} /></div><div className="filename"><b>{d.filename}</b><small>{d.sender} · {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}</small></div><span className={`status ${d.status}`}><i /> {d.status}</span><button className="analyze" onClick={() => az(d.id)}><Sparkles size={15} /></button></div>)}
+            {flt.length === 0 && <div style={{ padding: 30, textAlign: 'center', color: '#999', fontWeight: 700 }}>No documents yet. Send an image or document to your WhatsApp.</div>}
+            {flt.map(d => <DocumentRow key={d.id} doc={d} selected={sel.includes(d.id)} onToggle={() => setSel(s => s.includes(d.id) ? s.filter(x => x !== d.id) : [...s, d.id])} onAnalyze={() => az(d.id)} />)}
           </section>
         </div>}
 
@@ -212,6 +212,60 @@ function SPage(p: { settings: any; providers: Provider[]; onSave: (s: any) => vo
       {p.providers.map(prov => <div className="setting" key={prov.name}><div><b>{prov.name}</b><p>{prov.base_url || ''} {prov.model ? '· ' + prov.model : ''}</p></div><button className="button red" onClick={() => p.onDel(prov.name)}><Trash2 size={14} /> Remove</button></div>)}
     </div>}
   </div>;
+}
+
+
+// ==================== Document Row with Preview ====================
+function DocumentRow({ doc, selected, onToggle, onAnalyze }: { doc: Doc; selected: boolean; onToggle: () => void; onAnalyze: () => void }) {
+  const [preview, setPreview] = useState(false);
+  const isImage = doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(doc.filename||'');
+  const isPdf = doc.mime_type === 'application/pdf' || doc.filename?.toLowerCase().endsWith('.pdf');
+  const fileUrl = (import.meta.env.VITE_API_URL || '') + '/api/files/' + doc.id + '/raw';
+  const icon = isImage ? '<svg>...</svg>' : isPdf ? 'PDF' : 'DOC';
+
+  return (
+    <>
+      <div className="row" style={{ cursor: 'pointer' }} onClick={() => setPreview(!preview)}>
+        <input type="checkbox" checked={selected} onChange={e => { e.stopPropagation(); onToggle(); }} onClick={e => e.stopPropagation()} />
+        <div className="fileicon">{isImage ? <FileText size={20} /> : <FileText size={20} />}</div>
+        <div className="filename">
+          <b>{doc.filename || 'Untitled'}</b>
+          <small>{doc.sender} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : ''}{doc.metadata?.caption ? ' · ' + doc.metadata.caption : ''}</small>
+        </div>
+        <span className={`status ${doc.status}`} onClick={e => e.stopPropagation()}><i /> {doc.status}</span>
+        <button className="analyze" onClick={e => { e.stopPropagation(); onAnalyze(); }}><Sparkles size={15} /></button>
+      </div>
+      {preview && (
+        <div style={{ padding: '12px 18px', borderBottom: '2px solid #111', background: '#fafafa' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <b style={{ fontSize: 13 }}>File Info</b>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#555' }}>
+                <div>Type: {doc.mime_type || 'Unknown'}</div>
+                <div>Size: {doc.metadata?.size ? Math.round(doc.metadata.size/1024) + ' KB' : 'Unknown'}</div>
+                {doc.metadata?.caption && <div>Caption: {doc.metadata.caption}</div>}
+              </div>
+            </div>
+            {isImage && (
+              <div style={{ maxWidth: 200, maxHeight: 150, overflow: 'hidden', border: '2px solid #111', background: '#eee' }}>
+                <img
+                  src={fileUrl}
+                  alt={doc.filename}
+                  style={{ width: '100%', height: 'auto', objectFit: 'cover' }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              </div>
+            )}
+            {isPdf && (
+              <div style={{ border: '2px solid #111', padding: '12px 16px', background: '#f2504b', color: '#fff', fontWeight: 900, fontSize: 13 }}>
+                📄 PDF Document
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
