@@ -116,7 +116,7 @@ def test_unauthenticated_endpoints_require_auth():
         ('GET', '/api/settings'),
         ('POST', '/api/analysis/run'),
         ('GET', '/api/providers'),
-        ('GET', '/api/sessions'),
+        ('GET', '/api/waha/sessions'),
     ]
     for method, path in endpoints:
         r = client.request(method, path)
