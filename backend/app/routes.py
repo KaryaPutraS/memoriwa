@@ -1,4 +1,4 @@
-"""MemoriWA Routes — single-tenant: one dashboard, one WhatsApp number."""
+"""MemoriWA Routes — single-tenant."""
 from __future__ import annotations
 import hashlib, hmac, asyncio, json, logging, os
 from datetime import datetime, timezone
@@ -22,20 +22,31 @@ class ProviderRequest(BaseModel): name: str; base_url: str = ""; api_key: str = 
 class SettingsRequest(BaseModel): theme: str = "system"; language: str = "id"; auto_analyze: bool = False
 
 PROVIDER_PRESETS = [
-    {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-4o","gpt-4o-mini","gpt-4-turbo"]},
-    {"key":"anthropic","name":"Anthropic Claude","base_url":"https://api.anthropic.com/v1","models":["claude-sonnet-4-20250514","claude-3-5-haiku-latest"]},
-    {"key":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com/v1","models":["deepseek-chat","deepseek-reasoner"]},
-    {"key":"gemini","name":"Google Gemini","base_url":"https://generativelanguage.googleapis.com/v1beta","models":["gemini-2.5-flash","gemini-2.5-pro"]},
-    {"key":"groq","name":"Groq","base_url":"https://api.groq.com/openai/v1","models":["llama-4-scout-17b-16e-instruct","mixtral-8x7b-32768"]},
-    {"key":"ollama","name":"Ollama (Local)","base_url":"http://localhost:11434/v1","models":["llama3.2","mistral","gemma3"]},
-    {"key":"openrouter","name":"OpenRouter","base_url":"https://openrouter.ai/api/v1","models":["openai/gpt-4o","anthropic/claude-sonnet-4"]},
+    {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-4o","gpt-4o-mini"]},
+    {"key":"anthropic","name":"Anthropic Claude","base_url":"https://api.anthropic.com/v1","models":["claude-sonnet-4-20250514"]},
+    {"key":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com/v1","models":["deepseek-chat"]},
+    {"key":"gemini","name":"Google Gemini","base_url":"https://generativelanguage.googleapis.com/v1beta","models":["gemini-2.5-flash"]},
+    {"key":"groq","name":"Groq","base_url":"https://api.groq.com/openai/v1","models":["llama-4-scout-17b-16e-instruct"]},
+    {"key":"ollama","name":"Ollama (Local)","base_url":"http://localhost:11434/v1","models":["llama3.2"]},
+    {"key":"openrouter","name":"OpenRouter","base_url":"https://openrouter.ai/api/v1","models":["openai/gpt-4o"]},
     {"key":"custom","name":"Custom Provider","base_url":"","models":[]},
 ]
 
-def _is_document(mime: str = "", filename: str = "") -> bool:
-    doc_mimes = ("application/pdf","image/","text/","application/msword","application/vnd")
-    doc_exts = (".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".csv",".jpg",".jpeg",".png",".webp")
-    return any(mime.lower().startswith(m) for m in doc_mimes) or any(filename.lower().endswith(e) for e in doc_exts)
+DOC_MIMES = ("application/pdf","image/","text/","application/msword","application/vnd","application/zip")
+
+def _extract_media(payload: dict) -> dict:
+    """Extract media info from various WAHA webhook formats."""
+    # Format 1: payload.message.media (most common)
+    msg = payload.get("message") or payload.get("data") or payload
+    if isinstance(msg, dict):
+        media = msg.get("media") or msg.get("mediaData") or {}
+        if media:
+            return media
+        # Format 2: payload.payload.media
+        inner = payload.get("payload") or {}
+        if isinstance(inner, dict):
+            return inner.get("media") or {}
+    return {}
 
 class WSManager:
     def __init__(self): self.clients: set[WebSocket] = set()
@@ -50,22 +61,22 @@ ws_manager = WSManager()
 # Auth
 @router.post("/api/auth/login")
 async def login(body: LoginRequest):
-    if not hmac.compare_digest(body.username, auth.ADMIN_USERNAME): raise HTTPException(401, "Invalid credentials")
-    if not auth.verify_password(body.password, auth.ADMIN_PASSWORD_HASH): raise HTTPException(401, "Invalid credentials")
+    if not hmac.compare_digest(body.username, auth.ADMIN_USERNAME): raise HTTPException(401)
+    if not auth.verify_password(body.password, auth.ADMIN_PASSWORD_HASH): raise HTTPException(401)
     return {"access_token": auth.create_token(body.username), "token_type": "bearer"}
 
-# WAHA — Single Session
+# WAHA
 @router.get("/api/waha/status")
 async def waha_status(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
     session = await wh.get_session()
     me = await wh.get_me() if session and session.get("status") == "WORKING" else None
-    return {"connected": session.get("status") == "WORKING" if session else False, "status": session.get("status", "UNKNOWN") if session else "NOT_CREATED", "me": me, "session": {k: v for k, v in (session or {}).items() if k != "config"} if session else None}
+    return {"connected": session.get("status") == "WORKING" if session else False, "status": session.get("status", "UNKNOWN") if session else "NOT_CREATED", "me": me}
 
 @router.post("/api/waha/start")
 async def waha_start(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://memoriwa-api:8000/webhook/waha")
+    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://43.156.71.166:8082/webhook/waha")
     await wh.ensure_session(webhook_url)
     result = await wh.start()
     await ws_manager.broadcast({"type": "waha.status", "status": result.get("status", "STARTING")})
@@ -73,15 +84,13 @@ async def waha_start(user: str = Depends(auth.get_current_user)):
 
 @router.post("/api/waha/stop")
 async def waha_stop(user: str = Depends(auth.get_current_user)):
-    wh = get_waha()
-    result = await wh.stop()
+    result = await get_waha().stop()
     await ws_manager.broadcast({"type": "waha.status", "status": "STOPPED"})
     return result
 
 @router.post("/api/waha/logout")
 async def waha_logout(user: str = Depends(auth.get_current_user)):
-    wh = get_waha()
-    await wh.logout()
+    await get_waha().logout()
     await ws_manager.broadcast({"type": "waha.status", "status": "NOT_CREATED"})
     return {"deleted": True}
 
@@ -95,30 +104,84 @@ async def waha_qr(user: str = Depends(auth.get_current_user)):
             import asyncio as _a; await _a.sleep(3)
             qr = await wh.get_qr()
         except Exception: pass
-    if qr is None: raise HTTPException(404, "QR not available yet. Try again in a few seconds.")
+    if qr is None: raise HTTPException(404, "QR not available yet")
     return {"qr": qr}
 
 @router.get("/api/waha/health")
 async def waha_health_check():
-    if waha is None: return {"ok": False, "reason": "not initialized"}
+    if waha is None: return {"ok": False}
     return {"ok": await waha.health()}
 
-# Webhook
+# Webhook — handles ALL WAHA formats
 @router.post("/webhook/waha")
 async def webhook(payload: dict):
+    """Receive messages from WAHA. Accepts multiple WAHA payload formats."""
     repo = await get_repository()
-    eid = str(payload.get("id") or hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16])
-    if not await repo.add_event(eid): return {"accepted": False, "duplicate": True}
-    msg = payload.get("message") or payload.get("data") or payload
-    media = msg.get("media") or {}
-    mime = media.get("mimetype", msg.get("mimetype", ""))
-    filename = media.get("filename", msg.get("filename", ""))
-    if not _is_document(mime, filename): return {"accepted": False, "reason": "not a document or image"}
-    did = msg.get("id", eid)
-    doc = {"id": did, "filename": filename or "untitled", "mime_type": mime or "application/octet-stream", "source": "whatsapp", "sender": str(msg.get("from", "")), "url": media.get("url", ""), "file_url": media.get("url", ""), "status": "unanalyzed", "created_at": datetime.now(timezone.utc).isoformat(), "metadata": {"event_id": eid, "media_url": media.get("url", ""), "mimetype": mime, "size": media.get("size", 0), "caption": msg.get("body", msg.get("caption", ""))}}
+    
+    # Generate event ID for idempotency
+    eid = str(payload.get("id") or payload.get("eventId") or "")
+    if not eid:
+        # Try nested
+        msg = payload.get("message") or payload.get("data") or payload.get("payload") or {}
+        if isinstance(msg, dict):
+            eid = str(msg.get("id") or "")
+    if not eid:
+        eid = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    
+    # Idempotency check
+    if not await repo.add_event(eid):
+        return {"accepted": False, "duplicate": True, "event_id": eid}
+    
+    # Extract media
+    media = _extract_media(payload)
+    if not media:
+        # Check if message has body only (text)
+        msg = payload.get("message") or payload.get("data") or {}
+        body = msg.get("body", "") if isinstance(msg, dict) else ""
+        if body and not media:
+            return {"accepted": False, "reason": "text-only message", "event_id": eid}
+        return {"accepted": False, "reason": "no media found", "event_id": eid}
+    
+    # Extract sender
+    msg = payload.get("message") or payload.get("data") or payload.get("payload") or {}
+    sender = ""
+    if isinstance(msg, dict):
+        sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "")
+        # Clean WA ID format
+        if "@" in sender:
+            sender = sender.split("@")[0]
+    
+    mime = str(media.get("mimetype") or media.get("mimeType") or "application/octet-stream")
+    filename = str(media.get("filename") or media.get("fileName") or "untitled")
+    
+    # Check if document/image
+    is_doc = any(mime.lower().startswith(m) for m in DOC_MIMES)
+    is_img = mime.lower().startswith("image/")
+    if not is_doc:
+        return {"accepted": False, "reason": f"unsupported mime: {mime}", "event_id": eid}
+    
+    did = str(msg.get("id") or eid)
+    doc = {
+        "id": did,
+        "filename": filename,
+        "mime_type": mime,
+        "source": "whatsapp",
+        "sender": sender,
+        "url": str(media.get("url") or ""),
+        "file_url": str(media.get("url") or ""),
+        "status": "unanalyzed",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "event_id": eid,
+            "media_url": str(media.get("url") or ""),
+            "mimetype": mime,
+            "size": media.get("size") or media.get("fileSize") or 0,
+            "caption": str(msg.get("body") or msg.get("caption") or ""),
+        },
+    }
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
-    return {"accepted": True, "document_id": did}
+    return {"accepted": True, "document_id": did, "event_id": eid}
 
 # Documents
 @router.get("/api/documents")
@@ -136,7 +199,7 @@ async def delete_document(doc_id: str, user: str=Depends(auth.get_current_user))
     if not await (await get_repository()).delete_document(doc_id): raise HTTPException(404)
     return {"deleted": True}
 
-# Analysis (manual only)
+# Analysis
 @router.post("/api/analysis/run")
 async def run_analysis(user: str=Depends(auth.get_current_user)):
     repo = await get_repository()
@@ -148,7 +211,7 @@ async def run_analysis(user: str=Depends(auth.get_current_user)):
         for doc in result["items"]:
             await asyncio.sleep(0)
             doc["status"] = "analyzed"
-            doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "none", "extracted": False, "note": "No AI provider configured"}}
+            doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "stub", "note": "No AI provider configured"}}
             await repo.update_document(doc["id"], doc)
             await ws_manager.broadcast({"type": "document.updated", "data": doc})
     asyncio.create_task(_a())
@@ -163,7 +226,7 @@ async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
     async def _d():
         doc["status"] = "analyzed"
-        doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "none", "extracted": False}}
+        doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "stub"}}
         await repo.update_document(doc_id, doc)
         await ws_manager.broadcast({"type": "document.updated", "data": doc})
     asyncio.create_task(_d())
@@ -209,40 +272,32 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
             data = body.model_dump()
             if data["api_key"]: data["api_key"] = auth.encrypt_api_key(data["api_key"])
             else: data["api_key"] = p.get("api_key","")
-            data["id"] = data["name"]; p.update(data); await repo.add_provider(p)
+            p.update(data); await repo.add_provider(p)
             return {k:v for k,v in p.items() if k!="api_key"}
     raise HTTPException(404)
-
-
-# ========== File Download Proxy ==========
-@router.get("/api/files/{doc_id}/raw")
-async def download_file(doc_id: str, user: str = Depends(auth.get_current_user)):
-    """Proxy file download via WAHA media URL."""
-    from urllib.parse import urlparse
-    repo = await get_repository()
-    doc = await repo.get_document(doc_id)
-    if not doc: raise HTTPException(404)
-    
-    file_url = doc.get("file_url") or doc.get("url")
-    if not file_url: raise HTTPException(404, "No file URL available")
-    
-    # If it's a WAHA media URL (localhost), proxy it
-    if "localhost" in file_url or "127.0.0.1" in file_url or "waha" in file_url:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.get(file_url, headers={"X-Api-Key": os.getenv("WAHA_API_KEY", "")})
-                from fastapi.responses import Response
-                return Response(content=r.content, media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")))
-        except Exception as e:
-            raise HTTPException(502, f"Failed to fetch file: {e}")
-    
-    # External URL — redirect
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=file_url)
 
 @router.get("/api/provider-presets")
 async def get_provider_presets(user: str=Depends(auth.get_current_user)):
     return {"presets": PROVIDER_PRESETS}
+
+# File Download Proxy
+@router.get("/api/files/{doc_id}/raw")
+async def download_file(doc_id: str, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    doc = await repo.get_document(doc_id)
+    if not doc: raise HTTPException(404)
+    file_url = doc.get("file_url") or doc.get("url")
+    if not file_url: raise HTTPException(404, "No file URL")
+    if "localhost" in file_url or "127.0.0.1" in file_url or "waha" in file_url:
+        try:
+            async with __import__("httpx").AsyncClient(timeout=30) as client:
+                r = await client.get(file_url, headers={"X-Api-Key": os.getenv("WAHA_API_KEY", "")})
+                from fastapi.responses import Response
+                return Response(content=r.content, media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")))
+        except Exception as e:
+            raise HTTPException(502, f"Failed: {e}")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=file_url)
 
 # WebSocket
 @router.websocket("/ws")
