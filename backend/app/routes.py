@@ -1,6 +1,6 @@
-"""MemoriWA Routes — WAHA built-in, QR scan, document intelligence."""
+"""MemoriWA Routes — single-tenant: one dashboard, one WhatsApp number."""
 from __future__ import annotations
-import hashlib, hmac, asyncio, json, logging, os, base64 as b64
+import hashlib, hmac, asyncio, json, logging, os
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, Query
@@ -11,34 +11,15 @@ from app.waha_client import WAHAClient
 
 logger = logging.getLogger("memoriwa")
 router = APIRouter()
-
-# Global WAHA client — set by main.py lifespan
 waha: WAHAClient | None = None
 
 def get_waha() -> WAHAClient:
-    if waha is None:
-        raise HTTPException(503, "WAHA service not available")
+    if waha is None: raise HTTPException(503, "WAHA not available")
     return waha
 
-# ========== Models ==========
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class ProviderRequest(BaseModel):
-    name: str
-    base_url: str = ""
-    api_key: str = ""
-    model: str = ""
-
-class SettingsRequest(BaseModel):
-    theme: str = "system"
-    language: str = "id"
-    auto_analyze: bool = False
-    waha_api_key: str = ""
-
-class WAHASessionRequest(BaseModel):
-    name: str = "default"
+class LoginRequest(BaseModel): username: str; password: str
+class ProviderRequest(BaseModel): name: str; base_url: str = ""; api_key: str = ""; model: str = ""
+class SettingsRequest(BaseModel): theme: str = "system"; language: str = "id"; auto_analyze: bool = False
 
 PROVIDER_PRESETS = [
     {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-4o","gpt-4o-mini","gpt-4-turbo"]},
@@ -56,7 +37,7 @@ def _is_document(mime: str = "", filename: str = "") -> bool:
     doc_exts = (".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".csv",".jpg",".jpeg",".png",".webp")
     return any(mime.lower().startswith(m) for m in doc_mimes) or any(filename.lower().endswith(e) for e in doc_exts)
 
-class WebSocketManager:
+class WSManager:
     def __init__(self): self.clients: set[WebSocket] = set()
     async def broadcast(self, msg: dict):
         gone: set[WebSocket] = set()
@@ -64,157 +45,82 @@ class WebSocketManager:
             try: await ws.send_json(msg)
             except Exception: gone.add(ws)
         self.clients -= gone
-ws_manager = WebSocketManager()
+ws_manager = WSManager()
 
-# ========== Auth ==========
+# Auth
 @router.post("/api/auth/login")
 async def login(body: LoginRequest):
-    if not hmac.compare_digest(body.username, auth.ADMIN_USERNAME):
-        raise HTTPException(401, "Invalid credentials")
-    if not auth.verify_password(body.password, auth.ADMIN_PASSWORD_HASH):
-        raise HTTPException(401, "Invalid credentials")
+    if not hmac.compare_digest(body.username, auth.ADMIN_USERNAME): raise HTTPException(401, "Invalid credentials")
+    if not auth.verify_password(body.password, auth.ADMIN_PASSWORD_HASH): raise HTTPException(401, "Invalid credentials")
     return {"access_token": auth.create_token(body.username), "token_type": "bearer"}
 
-# ========== WAHA Sessions (Built-in) ==========
-@router.get("/api/waha/sessions")
-async def waha_list_sessions(user: str = Depends(auth.get_current_user)):
-    """List WAHA sessions from built-in WAHA container."""
+# WAHA — Single Session
+@router.get("/api/waha/status")
+async def waha_status(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    try:
-        sessions = await wh.list_sessions()
-        # Enrich with QR availability
-        for s in sessions:
-            s["has_qr"] = s.get("status") == "SCAN_QR_CODE"
-        return {"sessions": sessions}
-    except Exception as e:
-        logger.error(f"WAHA list sessions failed: {e}")
-        return {"sessions": [], "error": str(e)[:200]}
+    session = await wh.get_session()
+    me = await wh.get_me() if session and session.get("status") == "WORKING" else None
+    return {"connected": session.get("status") == "WORKING" if session else False, "status": session.get("status", "UNKNOWN") if session else "NOT_CREATED", "me": me, "session": {k: v for k, v in (session or {}).items() if k != "config"} if session else None}
 
-@router.post("/api/waha/sessions")
-async def waha_create_session(body: WAHASessionRequest, user: str = Depends(auth.get_current_user)):
-    """Create a new WAHA session, register webhook, and start it."""
+@router.post("/api/waha/start")
+async def waha_start(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    # Determine webhook URL — use our own external URL
-    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "")
-    if not webhook_url:
-        # Fallback: use the same origin as the request
-        webhook_url = "http://memoriwa-api:8000/webhook/waha"
-    
-    # Create session
-    session = await wh.create_session(body.name, webhook_url)
-    
-    # Store in our DB
-    repo = await get_repository()
-    await repo.add_waha_session({
-        "name": body.name,
-        "status": session.get("status", "STARTING"),
-        "engine": session.get("engine", {}).get("engine", "WEBJS"),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    
-    await ws_manager.broadcast({"type": "waha.session.created", "data": session})
-    return session
+    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://memoriwa-api:8000/webhook/waha")
+    await wh.ensure_session(webhook_url)
+    result = await wh.start()
+    await ws_manager.broadcast({"type": "waha.status", "status": result.get("status", "STARTING")})
+    return {"status": result.get("status", "STARTING")}
 
-@router.post("/api/waha/sessions/{name}/start")
-async def waha_start_session(name: str, user: str = Depends(auth.get_current_user)):
+@router.post("/api/waha/stop")
+async def waha_stop(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    result = await wh.start_session(name)
-    await ws_manager.broadcast({"type": "waha.session.started", "data": {"name": name}})
+    result = await wh.stop()
+    await ws_manager.broadcast({"type": "waha.status", "status": "STOPPED"})
     return result
 
-@router.post("/api/waha/sessions/{name}/stop")
-async def waha_stop_session(name: str, user: str = Depends(auth.get_current_user)):
+@router.post("/api/waha/logout")
+async def waha_logout(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    result = await wh.stop_session(name)
-    await ws_manager.broadcast({"type": "waha.session.stopped", "data": {"name": name}})
-    return result
+    await wh.logout()
+    await ws_manager.broadcast({"type": "waha.status", "status": "NOT_CREATED"})
+    return {"deleted": True}
 
-@router.delete("/api/waha/sessions/{name}")
-async def waha_delete_session(name: str, user: str = Depends(auth.get_current_user)):
+@router.get("/api/waha/qr")
+async def waha_qr(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    result = await wh.logout_session(name)
-    # Clean up from our DB
-    repo = await get_repository()
-    await repo.remove_waha_session(name)
-    await ws_manager.broadcast({"type": "waha.session.deleted", "data": {"name": name}})
-    return result
-
-@router.get("/api/waha/sessions/{name}/qr")
-async def waha_get_qr(name: str, user: str = Depends(auth.get_current_user)):
-    """Get QR code as base64 PNG for scanning."""
-    wh = get_waha()
-    qr = await wh.get_qr(name)
+    qr = await wh.get_qr()
     if qr is None:
-        raise HTTPException(404, "QR not available. Session may not be in SCAN_QR_CODE state.")
-    return {"qr": qr, "session": name}
-
-@router.get("/api/waha/sessions/{name}/status")
-async def waha_session_status(name: str, user: str = Depends(auth.get_current_user)):
-    """Get detailed status of a WAHA session."""
-    wh = get_waha()
-    sessions = await wh.list_sessions()
-    for s in sessions:
-        if s.get("name") == name:
-            me_info = await wh.get_me(name)
-            return {"session": s, "me": me_info}
-    raise HTTPException(404, f"Session '{name}' not found")
+        try:
+            await waha_start(user=user)
+            import asyncio as _a; await _a.sleep(3)
+            qr = await wh.get_qr()
+        except Exception: pass
+    if qr is None: raise HTTPException(404, "QR not available yet. Try again in a few seconds.")
+    return {"qr": qr}
 
 @router.get("/api/waha/health")
-async def waha_health(user: str = Depends(auth.get_current_user)):
-    wh = get_waha()
-    ok = await wh.health()
-    return {"ok": ok, "base_url": wh.base_url}
+async def waha_health_check():
+    if waha is None: return {"ok": False, "reason": "not initialized"}
+    return {"ok": await waha.health()}
 
-# ========== Webhook ==========
+# Webhook
 @router.post("/webhook/waha")
-async def webhook(payload: dict, x_webhook_secret: str | None = Header(None)):
-    """Receive messages from WAHA webhook. Only document/image messages stored.
-    Security: validates X-Webhook-Secret ONLY if WEBHOOK_SECRET env is explicitly set."""
-    # Webhook secret is optional — only enforce if explicitly configured
-    import os as _os
-    wh_secret = _os.getenv("WEBHOOK_SECRET", "")
-    if wh_secret and wh_secret not in ("", "change-me", "d60aa707cd3968b95028ee1c81dd8a91bf66b8b087776f9e"):
-        if not x_webhook_secret or not hmac.compare_digest(x_webhook_secret, wh_secret):
-            raise HTTPException(401, "Invalid webhook secret")
-    
-    # Extract event ID for idempotency
-    eid = str(payload.get("id") or payload.get("event_id") or "")
-    if not eid:
-        # Generate from hash for idempotency
-        eid = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
-    
+async def webhook(payload: dict):
     repo = await get_repository()
-    if not await repo.add_event(eid):
-        return {"accepted": False, "duplicate": True}
-    
-    # Extract message
+    eid = str(payload.get("id") or hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16])
+    if not await repo.add_event(eid): return {"accepted": False, "duplicate": True}
     msg = payload.get("message") or payload.get("data") or payload
     media = msg.get("media") or {}
     mime = media.get("mimetype", msg.get("mimetype", ""))
     filename = media.get("filename", msg.get("filename", ""))
-    
-    if not _is_document(mime, filename):
-        return {"accepted": False, "duplicate": False, "reason": "not a document or image"}
-    
+    if not _is_document(mime, filename): return {"accepted": False, "reason": "not a document or image"}
     did = msg.get("id", eid)
-    session_name = payload.get("session", "default")
-    doc = {
-        "id": did,
-        "filename": filename or "whatsapp-file",
-        "mime_type": mime or "application/octet-stream",
-        "source": "whatsapp",
-        "sender": str(msg.get("from", "")),
-        "url": media.get("url", ""),
-        "status": "unanalyzed",
-        "waha_session": session_name,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "metadata": {"event_id": eid},
-    }
+    doc = {"id": did, "filename": filename or "untitled", "mime_type": mime or "application/octet-stream", "source": "whatsapp", "sender": str(msg.get("from", "")), "url": media.get("url", ""), "file_url": media.get("url", ""), "status": "unanalyzed", "created_at": datetime.now(timezone.utc).isoformat(), "metadata": {"event_id": eid, "media_url": media.get("url", ""), "mimetype": mime, "size": media.get("size", 0), "caption": msg.get("body", msg.get("caption", ""))}}
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
-    return {"accepted": True, "duplicate": False, "document_id": did}
+    return {"accepted": True, "document_id": did}
 
-# ========== Documents ==========
+# Documents
 @router.get("/api/documents")
 async def list_documents(q: str|None=None, status: str|None=None, limit: int=50, user: str=Depends(auth.get_current_user)):
     return await (await get_repository()).get_documents(q=q, status=status, limit=limit)
@@ -222,7 +128,7 @@ async def list_documents(q: str|None=None, status: str|None=None, limit: int=50,
 @router.get("/api/documents/{doc_id}")
 async def get_document(doc_id: str, user: str=Depends(auth.get_current_user)):
     doc = await (await get_repository()).get_document(doc_id)
-    if not doc: raise HTTPException(404, "Document not found")
+    if not doc: raise HTTPException(404)
     return doc
 
 @router.delete("/api/documents/{doc_id}")
@@ -230,23 +136,22 @@ async def delete_document(doc_id: str, user: str=Depends(auth.get_current_user))
     if not await (await get_repository()).delete_document(doc_id): raise HTTPException(404)
     return {"deleted": True}
 
-# ========== Analysis (manual only) ==========
+# Analysis (manual only)
 @router.post("/api/analysis/run")
 async def run_analysis(user: str=Depends(auth.get_current_user)):
     repo = await get_repository()
     result = await repo.get_documents(status="unanalyzed", limit=1000)
     for doc in result["items"]:
-        doc["status"] = "processing"
-        await repo.update_document(doc["id"], doc)
+        doc["status"] = "processing"; await repo.update_document(doc["id"], doc)
         await ws_manager.broadcast({"type": "document.updated", "data": doc})
-    async def _analyze():
+    async def _a():
         for doc in result["items"]:
             await asyncio.sleep(0)
             doc["status"] = "analyzed"
             doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "none", "extracted": False, "note": "No AI provider configured"}}
             await repo.update_document(doc["id"], doc)
             await ws_manager.broadcast({"type": "document.updated", "data": doc})
-    asyncio.create_task(_analyze())
+    asyncio.create_task(_a())
     return {"queued": len(result["items"])}
 
 @router.post("/api/analysis/run/{doc_id}")
@@ -254,18 +159,17 @@ async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
-    doc["status"] = "processing"
-    await repo.update_document(doc_id, doc)
+    doc["status"] = "processing"; await repo.update_document(doc_id, doc)
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
-    async def _do():
+    async def _d():
         doc["status"] = "analyzed"
         doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "none", "extracted": False}}
         await repo.update_document(doc_id, doc)
         await ws_manager.broadcast({"type": "document.updated", "data": doc})
-    asyncio.create_task(_do())
+    asyncio.create_task(_d())
     return {"queued": 1}
 
-# ========== Stats, Settings, Providers ==========
+# Stats, Settings, Providers
 @router.get("/api/stats")
 async def get_stats(user: str=Depends(auth.get_current_user)):
     return await (await get_repository()).get_stats()
@@ -305,17 +209,42 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
             data = body.model_dump()
             if data["api_key"]: data["api_key"] = auth.encrypt_api_key(data["api_key"])
             else: data["api_key"] = p.get("api_key","")
-            data["id"] = data["name"]
-            p.update(data)
-            await repo.add_provider(p)
+            data["id"] = data["name"]; p.update(data); await repo.add_provider(p)
             return {k:v for k,v in p.items() if k!="api_key"}
     raise HTTPException(404)
+
+
+# ========== File Download Proxy ==========
+@router.get("/api/files/{doc_id}/raw")
+async def download_file(doc_id: str, user: str = Depends(auth.get_current_user)):
+    """Proxy file download via WAHA media URL."""
+    from urllib.parse import urlparse
+    repo = await get_repository()
+    doc = await repo.get_document(doc_id)
+    if not doc: raise HTTPException(404)
+    
+    file_url = doc.get("file_url") or doc.get("url")
+    if not file_url: raise HTTPException(404, "No file URL available")
+    
+    # If it's a WAHA media URL (localhost), proxy it
+    if "localhost" in file_url or "127.0.0.1" in file_url or "waha" in file_url:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(file_url, headers={"X-Api-Key": os.getenv("WAHA_API_KEY", "")})
+                from fastapi.responses import Response
+                return Response(content=r.content, media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")))
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch file: {e}")
+    
+    # External URL — redirect
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=file_url)
 
 @router.get("/api/provider-presets")
 async def get_provider_presets(user: str=Depends(auth.get_current_user)):
     return {"presets": PROVIDER_PRESETS}
 
-# ========== WebSocket ==========
+# WebSocket
 @router.websocket("/ws")
 async def ws_endpoint(socket: WebSocket):
     from jose import JWTError
@@ -324,8 +253,7 @@ async def ws_endpoint(socket: WebSocket):
     if not allowed and (os.getenv("ENV","") or "production").lower() in ("dev","test"):
         allowed = ["http://localhost:5173","http://127.0.0.1:5173"]
     origin = socket.headers.get("origin","")
-    if allowed and origin and origin not in allowed:
-        await socket.close(code=1008); return
+    if allowed and origin and origin not in allowed: await socket.close(code=1008); return
     token = socket.headers.get("sec-websocket-protocol","")
     if token.startswith("access_token."): token = token[13:]
     else: token = socket.query_params.get("token","")
