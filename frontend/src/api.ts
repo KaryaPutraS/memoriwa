@@ -124,6 +124,48 @@ export async function testWahaConnection() {
   return request('/api/waha/test', { method: 'POST' });
 }
 
+
+// WAHA Sessions (built-in)
+export async function getWahaSessions() {
+  return request('/api/waha/sessions');
+}
+
+export async function createWahaSession(name: string) {
+  return request('/api/waha/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function startWahaSession(name: string) {
+  return request(`/api/waha/sessions/${encodeURIComponent(name)}/start`, {
+    method: 'POST',
+  });
+}
+
+export async function stopWahaSession(name: string) {
+  return request(`/api/waha/sessions/${encodeURIComponent(name)}/stop`, {
+    method: 'POST',
+  });
+}
+
+export async function deleteWahaSession(name: string) {
+  return request(`/api/waha/sessions/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getWahaQR(name: string) {
+  return request(`/api/waha/sessions/${encodeURIComponent(name)}/qr`);
+}
+
+export async function getWahaSessionStatus(name: string) {
+  return request(`/api/waha/sessions/${encodeURIComponent(name)}/status`);
+}
+
+export async function getWahaHealth() {
+  return request('/api/waha/health');
+}
 // Sessions
 export async function getSessions() {
   return request('/api/sessions');
