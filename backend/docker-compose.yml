@@ -1,33 +1,35 @@
 services:
   api:
     build: .
+    container_name: wa-dashboard-api-1
     ports:
       - "8002:8000"
-    environment:
-      - ENV=production
-      - JWT_SECRET=${JWT_SECRET}
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-      - ADMIN_USERNAME=${ADMIN_USERNAME}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
-      - WAHA_URL=http://waha:3000
-      - WAHA_API_KEY=${WAHA_API_KEY:-}
-      - MEMORIWA_WEBHOOK_URL=${MEMORIWA_WEBHOOK_URL:-http://43.156.71.166:8082/webhook/waha}
+    env_file: .env
     restart: unless-stopped
-    depends_on:
-      - waha
-  
+    networks:
+      - app-net
+
   waha:
     image: devlikeapro/waha:latest
+    container_name: wa-dashboard-waha-1
     ports:
       - "3000:3000"
-    environment:
-      - WAHA_API_KEY=${WAHA_API_KEY:-memoriwa-waha-key-change-me}
-      - WAHA_DASHBOARD_USERNAME=admin
-      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-memoriwa123}
     volumes:
-      - waha_sessions:/app/.sessions
+      - waha_sessions:/app/data/sessions
+    environment:
+      - WAHA_API_KEY=${WAHA_API_KEY:-memoriwa-waha-key-2026}
+      - WAHA_PRINT_QR=false
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WAHA_CHROMIUM_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu,--single-process
     restart: unless-stopped
+    networks:
+      - app-net
+    mem_limit: 1g
+    memswap_limit: 2g
+
+networks:
+  app-net:
+    driver: bridge
 
 volumes:
   waha_sessions:
