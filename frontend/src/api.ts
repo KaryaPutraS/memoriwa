@@ -22,14 +22,8 @@ export async function login(username: string, password: string) {
 
 export function logout() { localStorage.removeItem('memoriwa_token'); }
 
-export async function getDocuments(params?: { limit?: number }) {
-  const qs = params?.limit ? `?limit=${params.limit}` : '';
-  return request('/api/documents' + qs);
-}
-
-export async function analyzeDocument(id: string) {
-  return request(`/api/documents/${id}/analyze`, { method: 'POST' });
-}
+export async function getDocuments() { return request('/api/documents?limit=50'); }
+export async function analyzeDocument(id: string) { return request(`/api/documents/${id}/analyze`, { method: 'POST' }); }
 
 export async function getSettings() { return request('/api/settings'); }
 export async function saveSettings(data: any) { return request('/api/settings', { method: 'PUT', body: JSON.stringify(data) }); }
@@ -38,7 +32,7 @@ export async function getProviders() { return request('/api/providers'); }
 export async function createProvider(data: any) { return request('/api/providers', { method: 'POST', body: JSON.stringify(data) }); }
 export async function deleteProvider(name: string) { return request(`/api/providers/${name}`, { method: 'DELETE' }); }
 
-// WAHA functions
+// WAHA functions - NO session parameter needed
 export async function startWaha() { return request('/api/waha/start', { method: 'POST' }); }
 export async function stopWaha() { return request('/api/waha/stop', { method: 'POST' }); }
 export async function logoutWaha() { return request('/api/waha/logout', { method: 'POST' }); }
