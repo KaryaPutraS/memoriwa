@@ -1,194 +1,47 @@
-const BASE = import.meta.env.VITE_API_URL || '';
+// MemoriWA API client
+const BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || '';
 
-let bearerToken: string | null = sessionStorage.getItem('token');
+export function setToken(token: string | null) { if (token) localStorage.setItem('memoriwa_token', token); else localStorage.removeItem('memoriwa_token'); }
+export function getToken(): string | null { return localStorage.getItem('memoriwa_token'); }
 
-export function setToken(token: string | null) {
-  bearerToken = token;
-  if (token) sessionStorage.setItem('token', token);
-  else sessionStorage.removeItem('token');
-}
-
-export function getToken(): string | null {
-  return bearerToken;
-}
-
-async function request(path: string, options: RequestInit = {}): Promise<any> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
-  };
-  if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed: ${res.status}`);
-  }
+async function request(path: string, opts?: RequestInit) {
+  const t = getToken();
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const res = await fetch(BASE + path, { ...opts, headers: { ...headers, ...(opts?.headers as any||{})} });
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-// Auth
 export async function login(username: string, password: string) {
-  const data = await request('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password }),
-  });
-  setToken(data.access_token);
-  return data;
+  const res = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  if (!res.ok) throw new Error('Login failed');
+  const data = await res.json();
+  return data.access_token;
 }
 
-export function logout() {
-  setToken(null);
+export function logout() { localStorage.removeItem('memoriwa_token'); }
+
+export async function getDocuments(params?: { limit?: number }) {
+  const qs = params?.limit ? `?limit=${params.limit}` : '';
+  return request('/api/documents' + qs);
 }
 
-// Documents
-export async function getDocuments(params?: {
-  q?: string; status?: string; limit?: number;
-}) {
-  const sp = new URLSearchParams();
-  if (params?.q) sp.set('q', params.q);
-  if (params?.status) sp.set('status', params.status);
-  if (params?.limit) sp.set('limit', String(params.limit));
-  const qs = sp.toString();
-  return request(`/api/documents${qs ? '?' + qs : ''}`);
-}
-
-export async function getDocument(id: string) {
-  return request(`/api/documents/${encodeURIComponent(id)}`);
-}
-
-export async function deleteDocument(id: string) {
-  return request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-// Analysis
 export async function analyzeDocument(id: string) {
-  return request(`/api/analysis/run/${encodeURIComponent(id)}`, {
-    method: 'POST',
-  });
+  return request(`/api/documents/${id}/analyze`, { method: 'POST' });
 }
 
-export async function analyzeAll() {
-  return request('/api/analysis/run', { method: 'POST' });
-}
+export async function getSettings() { return request('/api/settings'); }
+export async function saveSettings(data: any) { return request('/api/settings', { method: 'PUT', body: JSON.stringify(data) }); }
 
-// Stats
-export async function getStats() {
-  return request('/api/stats');
-}
+export async function getProviders() { return request('/api/providers'); }
+export async function createProvider(data: any) { return request('/api/providers', { method: 'POST', body: JSON.stringify(data) }); }
+export async function deleteProvider(name: string) { return request(`/api/providers/${name}`, { method: 'DELETE' }); }
 
-// Settings
-export async function getSettings() {
-  return request('/api/settings');
-}
-
-export async function saveSettings(data: {
-  theme?: string; language?: string; auto_analyze?: boolean;
-}) {
-  return request('/api/settings', {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  });
-}
-
-// Providers
-export async function getProviders() {
-  return request('/api/providers');
-}
-
-export async function createProvider(data: {
-  name: string; base_url?: string; api_key?: string; model?: string;
-}) {
-  return request('/api/providers', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function updateProvider(name: string, data: {
-  name: string; base_url?: string; api_key?: string; model?: string;
-}) {
-  return request(`/api/providers/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function deleteProvider(name: string) {
-  return request(`/api/providers/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
-}
-
-// WAHA
-export async function testWahaConnection() {
-  return request('/api/waha/test', { method: 'POST' });
-}
-
-
-// WAHA Sessions (built-in)
-export async function getWahaSessions() {
-  return request('/api/waha/sessions');
-}
-
-export async function createWahaSession(name: string) {
-  return request('/api/waha/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  });
-}
-
-export async function startWahaSession(name: string) {
-  return request(`/api/waha/sessions/${encodeURIComponent(name)}/start`, {
-    method: 'POST',
-  });
-}
-
-export async function stopWahaSession(name: string) {
-  return request(`/api/waha/sessions/${encodeURIComponent(name)}/stop`, {
-    method: 'POST',
-  });
-}
-
-export async function deleteWahaSession(name: string) {
-  return request(`/api/waha/sessions/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function getWahaQR(name: string) {
-  return request(`/api/waha/sessions/${encodeURIComponent(name)}/qr`);
-}
-
-export async function getWahaSessionStatus(name: string) {
-  return request(`/api/waha/sessions/${encodeURIComponent(name)}/status`);
-}
-
-export async function getWahaHealth() {
-  return request('/api/waha/health');
-}
-// Sessions
-export async function getSessions() {
-  return request('/api/sessions');
-}
-
-// WebSocket
-export function connectWebSocket(
-  onEvent: (msg: any) => void,
-  socketRef?: { current: WebSocket | null },
-): WebSocket | null {
-  const wsBase = import.meta.env.VITE_WS_URL || BASE.replace(/^http/, 'ws');
-  if (!bearerToken) return null;
-  const url = `${wsBase}/ws`;
-  const socket = new WebSocket(url, [`access_token.${bearerToken}`]);
-  if (socketRef) socketRef.current = socket;
-  socket.onmessage = (e) => {
-    try { onEvent(JSON.parse(e.data)); } catch { /* ignore */ }
-  };
-  socket.onclose = () => {
-    if (socketRef) socketRef.current = null;
-    setTimeout(() => {
-      if (bearerToken) connectWebSocket(onEvent, socketRef);
-    }, 5000);
-  };
-  return socket;
-}
+// WAHA functions
+export async function startWaha() { return request('/api/waha/start', { method: 'POST' }); }
+export async function stopWaha() { return request('/api/waha/stop', { method: 'POST' }); }
+export async function logoutWaha() { return request('/api/waha/logout', { method: 'POST' }); }
+export async function getWahaStatus() { return request('/api/waha/status'); }
+export async function getWahaQr() { return request('/api/waha/qr'); }
+export async function getWahaHealth() { return request('/api/waha/health'); }
