@@ -4,7 +4,7 @@ import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, S
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import {
   login, getToken, setToken, getDocuments,
-  startWahaSession as startWaha, stopWahaSession as stopWaha, deleteWahaSession as logoutWaha, getWahaSessionStatus as getWahaStatus, getWahaQR as getWahaQr, getWahaHealth,
+  startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth,
   getProviders, createProvider, deleteProvider,
   getSettings, saveSettings, analyzeDocument,
 } from './api';
@@ -28,14 +28,14 @@ function App() {
 
   const flash = (s:string) => { sm(s); setTimeout(() => sm(''), 2200); };
   const load = useCallback(async () => {
-    try { sd((await getDocuments({limit:50})).items||[]); } catch {}
+    try { sd((await getDocuments()).items||[]); } catch {}
     try { ssett(await getSettings()); } catch {}
-    try { swc((await getWahaStatus('default')).connected); } catch {}
+    try { swc((await getWahaStatus()).connected); } catch {}
     try { spv((await getProviders()).items||[]); } catch {}
   }, []);
   useEffect(() => { if (tok) load(); }, [tok, load]);
 
-  const rf = () => getDocuments({limit:50}).then(d => sd(d.items||[]));
+  const rf = () => getDocuments().then(d => sd(d.items||[]));
   const az = async (id:string) => { flash('Analyzing...'); await analyzeDocument(id).catch(()=>{}); rf(); flash('Done!'); };
 
   if (!tok) return <Login onLogin={(t:string) => { setToken(t); st(t); }} />;
@@ -267,7 +267,7 @@ function ConnectTab() {
 
   const rf = async () => { 
     try { 
-      const s = await getWahaStatus('default'); 
+      const s = await getWahaStatus(); 
       sc(s.connected); 
       setStatus(s.status||'');
       sh(await getWahaHealth()); 
@@ -277,15 +277,15 @@ function ConnectTab() {
   useEffect(() => { rf(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
 
   const startWithPoll = async () => {
-    await startWaha('default');
+    await startWaha();
     let attempts = 0;
     pollRef.current = setInterval(async () => {
       attempts++;
       try {
-        const s = await getWahaStatus('default');
+        const s = await getWahaStatus();
         setStatus(s.status||'');
         if (s.status === 'SCAN_QR_CODE' && !qr) {
-          const q = await getWahaQr('default');
+          const q = await getWahaQr();
           sq(q?.qr||'');
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -306,12 +306,12 @@ function ConnectTab() {
         <div className="fl g2">
           {!c ? (<>
             <button className="btn pr" onClick={startWithPoll}><Play size={13} /> Start</button>
-            <button className="btn" disabled={qb || status==='SCAN_QR_CODE'} onClick={async () => { sqb(true); try { sq((await getWahaQr('default')).qr||''); } catch {} sqb(false); }}>
+            <button className="btn" disabled={qb || status==='SCAN_QR_CODE'} onClick={async () => { sqb(true); try { sq((await getWahaQr()).qr||''); } catch {} sqb(false); }}>
               {qb ? <RotateCw size={13} className="sp-anim" /> : <QrCode size={13} />} Show QR
             </button>
           </>) : (<>
-            <button className="btn ac" onClick={async () => { await logoutWaha('default'); rf(); sq(''); setStatus(''); }}><LogOut size={13} /> Disconnect</button>
-            <button className="btn" onClick={async () => { await stopWaha('default'); rf(); }}><Square size={13} /> Stop</button>
+            <button className="btn ac" onClick={async () => { await logoutWaha(); rf(); sq(''); setStatus(''); }}><LogOut size={13} /> Disconnect</button>
+            <button className="btn" onClick={async () => { await stopWaha(); rf(); }}><Square size={13} /> Stop</button>
           </>)}
         </div>
         {qr && <div className="qw"><img src={`data:image/png;base64,${qr}`} alt="QR" className="qi" /><p>Scan with WhatsApp → Linked Devices</p></div>}
