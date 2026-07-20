@@ -18,17 +18,17 @@ def get_waha() -> WAHAClient:
     return waha
 
 class LoginRequest(BaseModel): username: str; password: str
-class ProviderRequest(BaseModel): name: str; base_url: str = ""; api_key: str = ""; model: str = ""
+class ProviderRequest(BaseModel): name: str; base_url: str = ""; api_key: str = ""; model: str = ""; active: bool | None = None
 class SettingsRequest(BaseModel): theme: str = "system"; language: str = "id"; auto_analyze: bool = False
 
 PROVIDER_PRESETS = [
-    {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-4o","gpt-4o-mini"]},
-    {"key":"anthropic","name":"Anthropic Claude","base_url":"https://api.anthropic.com/v1","models":["claude-sonnet-4-20250514"]},
-    {"key":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com/v1","models":["deepseek-chat"]},
-    {"key":"gemini","name":"Google Gemini","base_url":"https://generativelanguage.googleapis.com/v1beta","models":["gemini-2.5-flash"]},
-    {"key":"groq","name":"Groq","base_url":"https://api.groq.com/openai/v1","models":["llama-4-scout-17b-16e-instruct"]},
-    {"key":"ollama","name":"Ollama (Local)","base_url":"http://localhost:11434/v1","models":["llama3.2"]},
-    {"key":"openrouter","name":"OpenRouter","base_url":"https://openrouter.ai/api/v1","models":["openai/gpt-4o"]},
+    {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-5.5","gpt-5.4"]},
+    {"key":"anthropic","name":"Anthropic Claude","base_url":"https://api.anthropic.com/v1","models":["claude-sonnet-5","claude-opus-4-8","claude-haiku-4-5"]},
+    {"key":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com/v1","models":["deepseek-v4-flash","deepseek-v4-pro"]},
+    {"key":"gemini","name":"Google Gemini","base_url":"https://generativelanguage.googleapis.com/v1beta","models":["gemini-3.5-flash","gemini-3.1-pro-preview","gemini-3.1-flash-lite"]},
+    {"key":"groq","name":"Groq","base_url":"https://api.groq.com/openai/v1","models":["meta-llama/llama-4-scout-17b-16e-instruct","llama-3.3-70b-versatile","openai/gpt-oss-120b"]},
+    {"key":"ollama","name":"Ollama (Local)","base_url":"http://localhost:11434/v1","models":["llama3.3","qwen3","mistral"]},
+    {"key":"openrouter","name":"OpenRouter","base_url":"https://openrouter.ai/api/v1","models":["openai/gpt-5.5","anthropic/claude-sonnet-5","deepseek/deepseek-v4-flash"]},
     {"key":"custom","name":"Custom Provider","base_url":"","models":[]},
 ]
 
@@ -271,6 +271,7 @@ async def list_providers(user: str=Depends(auth.get_current_user)):
 @router.post("/api/providers", status_code=201)
 async def create_provider(body: ProviderRequest, user: str=Depends(auth.get_current_user)):
     data = body.model_dump()
+    data["active"] = bool(data.get("active"))
     if data["api_key"]: data["api_key"] = auth.encrypt_api_key(data["api_key"])
     data["id"] = data["name"]
     await (await get_repository()).add_provider(data)
@@ -287,6 +288,8 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
     for p in await repo.get_providers():
         if p.get("name") == provider_name:
             data = body.model_dump()
+            if data["active"] is None:
+                data.pop("active")  # not a toggle request — keep current state
             if data["api_key"]: data["api_key"] = auth.encrypt_api_key(data["api_key"])
             else: data["api_key"] = p.get("api_key","")
             p.update(data); await repo.add_provider(p)

@@ -31,6 +31,7 @@ export async function saveSettings(data: any) { return request('/api/settings', 
 export async function getProviders() { return request('/api/providers'); }
 export async function createProvider(data: any) { return request('/api/providers', { method: 'POST', body: JSON.stringify(data) }); }
 export async function deleteProvider(name: string) { return request(`/api/providers/${name}`, { method: 'DELETE' }); }
+export async function updateProvider(name: string, data: any) { return request(`/api/providers/${name}`, { method: 'PUT', body: JSON.stringify(data) }); }
 
 // WAHA functions - NO session parameter needed
 export async function startWaha() { return request('/api/waha/start', { method: 'POST' }); }

@@ -75,6 +75,9 @@ def test_provider_crud():
     r = client.get('/api/providers', headers=h)
     assert r.status_code == 200
     assert len(r.json()['items']) >= 1
+    r = client.put('/api/providers/test-prov', headers=h, json={'name': 'test-prov', 'base_url': 'https://api.test.com', 'model': 'gpt-4', 'active': True})
+    assert r.status_code == 200
+    assert r.json().get('active') is True
     r = client.delete('/api/providers/test-prov', headers=h)
     assert r.status_code == 200
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, getSettings, saveSettings, analyzeDocument } from './api';
+import { login, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -75,7 +75,8 @@ function App() {
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
           onSave={async(s:any)=>{setSettings(await saveSettings(s));flash('Saved')}}
           onAdd={async(p:Prov)=>{await createProvider(p);setProvs((await getProviders()).items||[]);flash('Added')}}
-          onDel={async(n:string)=>{await deleteProvider(n);setProvs((await getProviders()).items||[])}}/>}
+          onDel={async(n:string)=>{await deleteProvider(n);setProvs((await getProviders()).items||[])}}
+          onToggle={async(p:Prov)=>{await updateProvider(p.name,{name:p.name,kind:p.kind,model:p.model,api_key:'',base_url:p.base_url||'',active:!p.active});setProvs((await getProviders()).items||[]);flash(p.active?'Deactivated':'Activated')}}/>}
       </div>
       {toast&&<div className="toast"><Check size={16}/>{toast}</div>}
     </div>
@@ -167,14 +168,14 @@ function StatsPage({docs}:{docs:Doc[]}) {
     <div className="cd"><div className="cd-hd"><b>Types</b></div><ResponsiveContainer width="100%" height={200}><PieChart><Pie data={td} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={65} stroke="#111" strokeWidth={2}>{td.map((_,i)=><Cell key={i} fill={COLS[i+1]||COLS[0]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer></div></div></div>;
 }
 
-function SettingsPage({settings,provs,onSave,onAdd,onDel}:any) {
+function SettingsPage({settings,provs,onSave,onAdd,onDel,onToggle}:any) {
   const [tab,setTab]=useState('connect');
   const [loc,setLoc]=useState(settings||{});
   return <div className="pg"><div className="tbs">
     {[{id:'connect',l:'Connection'},{id:'general',l:'General'},{id:'ai',l:'AI'}].map(t=><button key={t.id} className={`tb-btn ${tab===t.id?'on':''}`} onClick={()=>setTab(t.id)}>{t.l}</button>)}</div>
     {tab==='connect'&&<ConnectTab/>}
     {tab==='general'&&<div className="cd"><div className="cd-hd"><b>General</b></div><div className="p4 s3"><FL label="Webhook Secret" val={loc.webhook_secret||''} onChange={(v:string)=>setLoc({...loc,webhook_secret:v})}/><FL label="Retention (days)" val={loc.retention_days||'90'} onChange={(v:string)=>setLoc({...loc,retention_days:v})}/><button className="btn pr" onClick={()=>onSave(loc)}>Save</button></div></div>}
-    {tab==='ai'&&<AITab pv={provs} onAdd={onAdd} onDel={onDel}/>}
+    {tab==='ai'&&<AITab pv={provs} onAdd={onAdd} onDel={onDel} onToggle={onToggle}/>}
   </div>;
 }
 
@@ -227,15 +228,15 @@ function ConnectTab() {
   </div></div>;
 }
 
-function AITab({pv,onAdd,onDel}:{pv:Prov[];onAdd:(p:Prov)=>void;onDel:(n:string)=>void}) {
-  const [k,sk]=useState('openai'),[m,sm]=useState('gpt-4o'),[a,sa]=useState(''),[u,su]=useState(''),[s,ss]=useState(false);
-  const PS:Record<string,{l:string;ms:string[];u:string}>={openai:{l:'OpenAI',ms:['gpt-4o','gpt-4o-mini'],u:''},anthropic:{l:'Anthropic',ms:['claude-sonnet-4','claude-3-5-haiku'],u:''},deepseek:{l:'DeepSeek',ms:['deepseek-chat','deepseek-reasoner'],u:''},gemini:{l:'Gemini',ms:['gemini-2.5-pro','gemini-2.5-flash'],u:''},groq:{l:'Groq',ms:['llama-3-70b','mixtral-8x7b'],u:''},ollama:{l:'Ollama',ms:['llama3','mistral'],u:'http://localhost:11434'},openrouter:{l:'OpenRouter',ms:['openai/gpt-4o','anthropic/claude-sonnet-4'],u:'https://openrouter.ai/api/v1'},custom:{l:'Custom',ms:[''],u:''}};
+function AITab({pv,onAdd,onDel,onToggle}:{pv:Prov[];onAdd:(p:Prov)=>void;onDel:(n:string)=>void;onToggle:(p:Prov)=>void}) {
+  const [k,sk]=useState('openai'),[m,sm]=useState('gpt-5.5'),[a,sa]=useState(''),[u,su]=useState(''),[s,ss]=useState(false);
+  const PS:Record<string,{l:string;ms:string[];u:string}>={openai:{l:'OpenAI',ms:['gpt-5.5','gpt-5.4'],u:'https://api.openai.com/v1'},anthropic:{l:'Anthropic',ms:['claude-sonnet-5','claude-opus-4-8','claude-haiku-4-5'],u:'https://api.anthropic.com/v1'},deepseek:{l:'DeepSeek',ms:['deepseek-v4-flash','deepseek-v4-pro'],u:'https://api.deepseek.com/v1'},gemini:{l:'Gemini',ms:['gemini-3.5-flash','gemini-3.1-pro-preview','gemini-3.1-flash-lite'],u:'https://generativelanguage.googleapis.com/v1beta'},groq:{l:'Groq',ms:['meta-llama/llama-4-scout-17b-16e-instruct','llama-3.3-70b-versatile','openai/gpt-oss-120b'],u:'https://api.groq.com/openai/v1'},ollama:{l:'Ollama',ms:['llama3.3','qwen3','mistral'],u:'http://localhost:11434'},openrouter:{l:'OpenRouter',ms:['openai/gpt-5.5','anthropic/claude-sonnet-5','deepseek/deepseek-v4-flash'],u:'https://openrouter.ai/api/v1'},custom:{l:'Custom',ms:[''],u:''}};
   return <div className="cd"><div className="cd-hd"><b>AI Providers ({pv.length})</b><button className="btn sm" onClick={()=>ss(!s)}><Plus size={13}/>{s?'Cancel':'Add'}</button></div>
     {s&&<div className="p4 b2 s3"><div className="g2">
       <FL label="Provider" val={k} onChange={(v:string)=>{sk(v);sm(PS[v]?.ms[0]||'');su(PS[v]?.u||'')}} sl opts={Object.keys(PS).map(x=>({v:x,l:PS[x].l}))}/>
-      <FL label="Model" val={m} onChange={(v:string)=>sm(v)} sl opts={(PS[k]?.ms||[]).map(x=>({v:x,l:x}))}/>
+      <div className="fi"><label>Model</label><input className="inp" list="model-opts" value={m} onChange={e=>sm(e.target.value)} placeholder="ketik atau pilih model"/><datalist id="model-opts">{(PS[k]?.ms||[]).filter(x=>x).map(x=><option key={x} value={x}/>)}</datalist></div>
     </div><FL label="API Key" val={a} onChange={(v:string)=>sa(v)} pw/>{u&&<FL label="Base URL" val={u} onChange={(v:string)=>su(v)}/>}<button className="btn pr" onClick={()=>{if(!a)return;onAdd({name:`${k}-${Date.now()}`,kind:k,model:m,api_key:a,base_url:u||'',active:true});sa('');ss(false)}}><Plus size={13}/>Add</button></div>}
-    {pv.length===0?<div className="em"><Settings size={32}/><b>No providers</b><p>Add at least one.</p></div>:pv.map(p=><div key={p.name} className="pr-row"><div><b>{p.kind}</b><span className="ml2 xs mu">{p.model}</span></div><div className="fl g2"><span className={`bd ${p.active?'on':'off'}`}>{p.active?'Active':'Off'}</span><button className="bi" onClick={()=>onDel(p.name)}><Trash2 size={13}/></button></div></div>)}
+    {pv.length===0?<div className="em"><Settings size={32}/><b>No providers</b><p>Add at least one.</p></div>:pv.map(p=><div key={p.name} className="pr-row"><div><b>{p.kind}</b><span className="ml2 xs mu">{p.model}</span></div><div className="fl g2"><span className={`bd ${p.active?'on':'off'}`}>{p.active?'Active':'Off'}</span><button className="btn sm" onClick={()=>onToggle(p)}>{p.active?'Deactivate':'Activate'}</button><button className="bi" onClick={()=>onDel(p.name)}><Trash2 size={13}/></button></div></div>)}
   </div>;
 }
 
