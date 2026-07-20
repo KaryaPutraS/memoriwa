@@ -88,3 +88,21 @@ def test_analysis():
     r = client.post('/api/analysis/run', headers=_auth())
     assert r.status_code == 200
 
+def test_webhook_secret_enforced_when_configured():
+    """When WEBHOOK_SECRET is set, webhook rejects callers without the secret."""
+    import app.auth as auth_mod
+    original = auth_mod.WEBHOOK_SECRET
+    auth_mod.WEBHOOK_SECRET = 'test-webhook-secret-123'
+    try:
+        payload = {'id': 'evt-sec1', 'message': {'id': 'sec1', 'from': '628123', 'media': {'mimetype': 'application/pdf', 'filename': 's.pdf', 'url': 'https://example.com/s.pdf'}}}
+        r = client.post('/webhook/waha', json=payload)
+        assert r.status_code == 401
+        r = client.post('/webhook/waha?secret=wrong', json=payload)
+        assert r.status_code == 401
+        r = client.post('/webhook/waha?secret=test-webhook-secret-123', json=payload)
+        assert r.status_code == 200 and r.json().get('accepted') is True
+        r = client.post('/webhook/waha', json={**payload, 'id': 'evt-sec2', 'message': {**payload['message'], 'id': 'sec2'}}, headers={'X-Webhook-Secret': 'test-webhook-secret-123'})
+        assert r.status_code == 200 and r.json().get('accepted') is True
+    finally:
+        auth_mod.WEBHOOK_SECRET = original
+

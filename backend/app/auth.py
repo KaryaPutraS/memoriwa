@@ -34,7 +34,13 @@ def _get_secret_optional(name: str) -> str:
 def init_auth():
     global JWT_SECRET, WEBHOOK_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD_HASH, _fernet
     JWT_SECRET = _get_secret('JWT_SECRET', 32)
-    WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')  # Optional — not enforced
+    # Webhook shared secret — required in production so the webhook endpoint
+    # cannot be used by strangers to inject fake documents. Optional in dev/test.
+    env = (os.getenv('ENV', 'production') or 'production').lower()
+    if env in ('dev', 'development', 'test'):
+        WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')
+    else:
+        WEBHOOK_SECRET = _get_secret('WEBHOOK_SECRET', 16)
     # Derive Fernet key from JWT_SECRET so it's deterministic per deployment
     _fernet_key = base64.urlsafe_b64encode(
         hashlib.sha256(JWT_SECRET.encode('utf-8')).digest()

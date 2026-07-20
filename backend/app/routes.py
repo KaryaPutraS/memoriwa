@@ -77,6 +77,9 @@ async def waha_status(user: str = Depends(auth.get_current_user)):
 async def waha_start(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
     webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://43.156.71.166:8082/webhook/waha")
+    if auth.WEBHOOK_SECRET:
+        sep = "&" if "?" in webhook_url else "?"
+        webhook_url = f"{webhook_url}{sep}secret={auth.WEBHOOK_SECRET}"
     await wh.ensure_session(webhook_url)
     result = await wh.start()
     await ws_manager.broadcast({"type": "waha.status", "status": result.get("status", "STARTING")})
@@ -113,9 +116,23 @@ async def waha_health_check():
     return {"ok": await waha.health()}
 
 # Webhook — handles ALL WAHA formats
+def _check_webhook_secret(secret: str | None, header_secret: str | None) -> None:
+    """Enforce shared-secret auth on the webhook when WEBHOOK_SECRET is set.
+
+    The secret travels either as ?secret=... (embedded in the webhook URL
+    registered in WAHA) or as the X-Webhook-Secret header.
+    """
+    expected = auth.WEBHOOK_SECRET
+    if not expected:
+        return  # dev/test mode — enforcement disabled
+    provided = secret or header_secret or ""
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(401, "Invalid webhook secret")
+
 @router.post("/webhook/waha")
-async def webhook(payload: dict):
+async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_secret: str | None = Header(None)):
     """Receive messages from WAHA. Accepts multiple WAHA payload formats."""
+    _check_webhook_secret(secret, x_webhook_secret)
     repo = await get_repository()
     
     # Generate event ID for idempotency
@@ -219,18 +236,6 @@ async def run_analysis(user: str=Depends(auth.get_current_user)):
 
 @router.post("/api/analysis/run/{doc_id}")
 async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
-    # SECURITY: Require valid JWT token via query param or Bearer header
-    from jose import jwt as jose_jwt, JWTError as JWTErr
-    valid = False
-    tok = token or (authorization.replace('Bearer ', '') if authorization and authorization.startswith('Bearer ') else None)
-    if tok:
-        try: 
-            payload = jose_jwt.decode(tok, auth.JWT_SECRET, algorithms=[auth.ALGO])
-            valid = True
-        except JWTErr: pass
-    if not valid:
-        raise HTTPException(401, 'Authentication required. Add ?token=YOUR_JWT to the URL.')
-    
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
@@ -317,22 +322,31 @@ async def download_file(doc_id: str, token: str = None, authorization: str = Hea
     # Try to get the file from WAHA using the media URL from webhook
     file_url = doc.get("file_url") or doc.get("url") or ""
     wh = get_waha() if waha else None
-    
-    if wh and file_url:
-        # Rewrite localhost to Docker internal hostname
-        fetch_url = file_url.replace("http://localhost:3000", "http://waha:3000")
-        
+
+    # SSRF guard: the media URL comes from webhook payloads, so only ever
+    # fetch from the WAHA service itself — never arbitrary hosts.
+    from urllib.parse import urlparse
+    allowed_hosts = {"localhost:3000", "127.0.0.1:3000", "waha:3000"}
+    fetch_url = ""
+    if file_url:
+        parsed = urlparse(file_url.replace("http://localhost:3000", "http://waha:3000"))
+        if parsed.scheme == "http" and parsed.netloc in allowed_hosts:
+            fetch_url = parsed.geturl()
+        else:
+            logger.warning("Blocked non-WAHA media URL for doc %s: %s", doc_id, file_url[:120])
+
+    if wh and fetch_url:
         try:
             import httpx
-            h = {"X-Api-Key": os.getenv("WAHA_API_KEY", "memoriwa-waha-key-2026")}
+            safe_name = "".join(c for c in filename if c not in '\r\n";\\')[:120] or "file"
             async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.get(fetch_url, headers=h, follow_redirects=True)
+                r = await client.get(fetch_url, headers=wh._headers(), follow_redirects=False)
                 if r.status_code == 200 and len(r.content) > 100:
                     from fastapi.responses import Response
                     return Response(
                         content=r.content,
                         media_type=mime,
-                        headers={"Cache-Control": "public, max-age=3600", "Content-Disposition": f"inline; filename={filename}"}
+                        headers={"Cache-Control": "private, no-store", "Content-Disposition": f'inline; filename="{safe_name}"'}
                     )
         except Exception:
             pass

@@ -3,7 +3,7 @@ services:
     build: .
     container_name: wa-dashboard-api-1
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     env_file: .env
     restart: unless-stopped
     networks:
@@ -13,11 +13,11 @@ services:
     image: devlikeapro/waha:latest
     container_name: wa-dashboard-waha-1
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
-      - waha_sessions:/app/data/sessions
+      - waha_sessions:/app/.sessions
     environment:
-      - WAHA_API_KEY=${WAHA_API_KEY:-memoriwa-waha-key-2026}
+      - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY must be set in .env}
       - WAHA_PRINT_QR=false
       - WHATSAPP_DEFAULT_ENGINE=WEBJS
       - WAHA_CHROMIUM_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu,--single-process
