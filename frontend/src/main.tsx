@@ -10,6 +10,22 @@ type Prov = { name:string; kind:string; model:string; api_key:string; base_url?:
 const SC: Record<string,string> = { unanalyzed:'#999', processing:'#f59e0b', analyzed:'#00d4aa', failed:'#f2504b' };
 const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || '';
 
+// Fetch a protected file with the Bearer token and expose it as a local blob
+// URL — keeps JWTs out of URLs, access logs and browser history.
+function useAuthFileUrl(id: string, enabled: boolean): string {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!enabled) { setUrl(''); return; }
+    let obj = '', dead = false;
+    fetch(API_URL + '/api/files/' + id + '/raw', { headers: { Authorization: 'Bearer ' + (getToken() || '') } })
+      .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+      .then(b => { if (!dead) { obj = URL.createObjectURL(b); setUrl(obj); } })
+      .catch(() => {});
+    return () => { dead = true; if (obj) URL.revokeObjectURL(obj); };
+  }, [id, enabled]);
+  return url;
+}
+
 function App() {
   const [page, setPage] = useState('Inbox');
   const [sidebar, setSidebar] = useState(false);
@@ -114,7 +130,7 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
   const [o,so]=useState(false);
   const im=doc.mime_type?.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif)$/i.test(doc.filename||'');
   const pd=doc.mime_type==='application/pdf';
-  const pv=API_URL+'/api/files/'+doc.id+'/raw?token='+(getToken()||'');
+  const pv=useAuthFileUrl(doc.id, o);
   const cl=SC[doc.status]||'#999';
   return <div className="dw">
     <div className="dr" onClick={()=>so(!o)}>
@@ -127,10 +143,10 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
     </div>
     {o&&<div className="dp"><div className="dg"><div className="dp-info"><b>{doc.filename}</b>
       <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
-      {im&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
+      {im&&pv&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
       {pd&&<div className="pm pf"><FileIcon size={32}/><b>PDF</b><span>Document</span></div>}
       {!im&&!pd&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
-      <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv} target="_blank" rel="noopener"><Share2 size={12}/> Open</a></div></div>
+      <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open</a></div></div>
     }</div>;
 }
 
