@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -262,25 +262,60 @@ function ConnectTab() {
   const [qr,sq] = useState('');
   const [qb,sqb] = useState(false);
   const [h,sh] = useState<any>(null);
-  const rf = async () => { try { sc((await getWahaStatus('default')).connected); sh(await getWahaHealth()); } catch {} };
-  useEffect(() => { rf(); }, []);
+  const [status,setStatus] = useState('');
+  const pollRef = React.useRef<any>(null);
+
+  const rf = async () => { 
+    try { 
+      const s = await getWahaStatus('default'); 
+      sc(s.connected); 
+      setStatus(s.status||'');
+      sh(await getWahaHealth()); 
+    } catch {} 
+  };
+
+  useEffect(() => { rf(); return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
+
+  const startWithPoll = async () => {
+    await startWaha('default');
+    let attempts = 0;
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const s = await getWahaStatus('default');
+        setStatus(s.status||'');
+        if (s.status === 'SCAN_QR_CODE' && !qr) {
+          const q = await getWahaQr('default');
+          sq(q?.qr||'');
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+        if (s.connected) { sc(true); clearInterval(pollRef.current); pollRef.current = null; }
+      } catch {}
+      if (attempts > 30) { clearInterval(pollRef.current); pollRef.current = null; }
+    }, 2000);
+  };
 
   return (
     <div className="cd"><div className="cd-hd"><b>WhatsApp Connection</b></div>
       <div className="p4 s4">
-        <div className="fl aic g2"><div className={`dot ${c?'on':'off'}`} /><b>{c?'Connected':'Not Connected'}</b>{h?.ok && <span className="hb"><Check size={12} />Online</span>}</div>
+        <div className="fl aic g2"><div className={`dot ${c?'on':'off'}`} /><b>{c?'Connected':'Not Connected'}</b>
+          {status && <span className="text-xs mu ml2">{status}</span>}
+          {h?.ok && <span className="hb"><Check size={12} />Online</span>}
+        </div>
         <div className="fl g2">
           {!c ? (<>
-            <button className="btn pr" onClick={async () => { await startWaha('default'); rf(); }}><Play size={13} /> Start</button>
-            <button className="btn" disabled={qb} onClick={async () => { sqb(true); try { sq((await getWahaQr('default')).qr||''); } catch {} sqb(false); }}>
+            <button className="btn pr" onClick={startWithPoll}><Play size={13} /> Start</button>
+            <button className="btn" disabled={qb || status==='SCAN_QR_CODE'} onClick={async () => { sqb(true); try { sq((await getWahaQr('default')).qr||''); } catch {} sqb(false); }}>
               {qb ? <RotateCw size={13} className="sp-anim" /> : <QrCode size={13} />} Show QR
             </button>
           </>) : (<>
-            <button className="btn ac" onClick={async () => { await logoutWaha('default'); rf(); sq(''); }}><LogOut size={13} /> Disconnect</button>
+            <button className="btn ac" onClick={async () => { await logoutWaha('default'); rf(); sq(''); setStatus(''); }}><LogOut size={13} /> Disconnect</button>
             <button className="btn" onClick={async () => { await stopWaha('default'); rf(); }}><Square size={13} /> Stop</button>
           </>)}
         </div>
         {qr && <div className="qw"><img src={`data:image/png;base64,${qr}`} alt="QR" className="qi" /><p>Scan with WhatsApp → Linked Devices</p></div>}
+        {!c && status === 'WORKING' && <div className="health-badge mt-2"><Check size={12} />Connected! Files will appear in Inbox.</div>}
       </div></div>
   );
 }
