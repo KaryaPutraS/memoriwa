@@ -288,16 +288,28 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
     if not doc: raise HTTPException(404)
     file_url = doc.get("file_url") or doc.get("url")
     if not file_url: raise HTTPException(404, "No file URL")
-    if "localhost" in file_url or "127.0.0.1" in file_url or "waha" in file_url:
-        try:
-            async with __import__("httpx").AsyncClient(timeout=30) as client:
-                r = await client.get(file_url, headers={"X-Api-Key": os.getenv("WAHA_API_KEY", "")})
-                from fastapi.responses import Response
-                return Response(content=r.content, media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")))
-        except Exception as e:
-            raise HTTPException(502, f"Failed: {e}")
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=file_url)
+    
+    # Rewrite localhost WAHA URLs to use Docker service name
+    if "localhost:3000" in file_url:
+        file_url = file_url.replace("http://localhost:3000", "http://waha:3000")
+    
+    try:
+        import httpx
+        h = {"X-Api-Key": os.getenv("WAHA_API_KEY", "")}
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(file_url, headers=h)
+            from fastapi.responses import Response
+            return Response(
+                content=r.content,
+                media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")),
+                headers={"Cache-Control": "public, max-age=3600"}
+            )
+    except Exception:
+        # Fallback: redirect external URLs
+        if file_url.startswith("http"):
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url=file_url)
+        raise HTTPException(502, "Failed to fetch file")
 
 # WebSocket
 @router.websocket("/ws")
