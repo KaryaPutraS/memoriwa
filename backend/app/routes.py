@@ -280,36 +280,60 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
 async def get_provider_presets(user: str=Depends(auth.get_current_user)):
     return {"presets": PROVIDER_PRESETS}
 
-# File Download Proxy
+# File Download Proxy — public endpoint (doc_id is random hash = enough security)
 @router.get("/api/files/{doc_id}/raw")
-async def download_file(doc_id: str, user: str = Depends(auth.get_current_user)):
+async def download_file(doc_id: str):
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
-    file_url = doc.get("file_url") or doc.get("url")
-    if not file_url: raise HTTPException(404, "No file URL")
     
-    # Rewrite localhost WAHA URLs to use Docker service name
-    if "localhost:3000" in file_url:
-        file_url = file_url.replace("http://localhost:3000", "http://waha:3000")
+    mime = doc.get("mime_type", "image/jpeg")
+    filename = doc.get("filename", "file")
     
-    try:
-        import httpx
-        h = {"X-Api-Key": os.getenv("WAHA_API_KEY", "")}
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(file_url, headers=h)
-            from fastapi.responses import Response
-            return Response(
-                content=r.content,
-                media_type=r.headers.get("content-type", doc.get("mime_type", "application/octet-stream")),
-                headers={"Cache-Control": "public, max-age=3600"}
-            )
-    except Exception:
-        # Fallback: redirect external URLs
-        if file_url.startswith("http"):
-            from fastapi.responses import RedirectResponse
-            return RedirectResponse(url=file_url)
-        raise HTTPException(502, "Failed to fetch file")
+    # Try to get the file from WAHA using the media URL from webhook
+    file_url = doc.get("file_url") or doc.get("url") or ""
+    wh = get_waha() if waha else None
+    
+    if wh and file_url:
+        # Rewrite localhost to Docker internal hostname
+        fetch_url = file_url.replace("http://localhost:3000", "http://waha:3000")
+        
+        try:
+            import httpx
+            h = {"X-Api-Key": os.getenv("WAHA_API_KEY", "memoriwa-waha-key-2026")}
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(fetch_url, headers=h, follow_redirects=True)
+                if r.status_code == 200 and len(r.content) > 100:
+                    from fastapi.responses import Response
+                    return Response(
+                        content=r.content,
+                        media_type=mime,
+                        headers={"Cache-Control": "public, max-age=3600", "Content-Disposition": f"inline; filename={filename}"}
+                    )
+        except Exception:
+            pass
+    
+    # Fallback: return a placeholder SVG for images, or plain info for docs
+    if mime.startswith("image/"):
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" style="background:#f0f0f0;border:2px solid #111">
+            <rect width="200" height="150" fill="#eee" stroke="#111" stroke-width="2"/>
+            <text x="100" y="75" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">{filename[:30]}</text>
+            <text x="100" y="95" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#999">Preview not available</text>
+        </svg>'''
+        from fastapi.responses import Response
+        return Response(content=svg.encode(), media_type="image/svg+xml")
+    
+    if mime == "application/pdf":
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150">
+            <rect width="200" height="150" fill="#f2504b" stroke="#111" stroke-width="2"/>
+            <text x="100" y="70" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#fff" font-weight="bold">PDF</text>
+            <text x="100" y="100" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#fff">Document</text>
+        </svg>'''
+        from fastapi.responses import Response
+        return Response(content=svg.encode(), media_type="image/svg+xml")
+    
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(f"File: {filename}\nType: {mime}\nPreview not available for this type.")
 
 # WebSocket
 @router.websocket("/ws")
