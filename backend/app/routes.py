@@ -219,6 +219,18 @@ async def run_analysis(user: str=Depends(auth.get_current_user)):
 
 @router.post("/api/analysis/run/{doc_id}")
 async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
+    # SECURITY: Require valid JWT token via query param or Bearer header
+    from jose import jwt as jose_jwt, JWTError as JWTErr
+    valid = False
+    tok = token or (authorization.replace('Bearer ', '') if authorization and authorization.startswith('Bearer ') else None)
+    if tok:
+        try: 
+            payload = jose_jwt.decode(tok, auth.JWT_SECRET, algorithms=[auth.ALGO])
+            valid = True
+        except JWTErr: pass
+    if not valid:
+        raise HTTPException(401, 'Authentication required. Add ?token=YOUR_JWT to the URL.')
+    
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
@@ -280,9 +292,21 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
 async def get_provider_presets(user: str=Depends(auth.get_current_user)):
     return {"presets": PROVIDER_PRESETS}
 
-# File Download Proxy — public endpoint (doc_id is random hash = enough security)
+# File Download Proxy — requires auth via token query param OR Bearer header
 @router.get("/api/files/{doc_id}/raw")
-async def download_file(doc_id: str):
+async def download_file(doc_id: str, token: str = None, authorization: str = Header(None)):
+    # SECURITY: Require valid JWT token via query param or Bearer header
+    from jose import jwt as jose_jwt, JWTError as JWTErr
+    valid = False
+    tok = token or (authorization.replace('Bearer ', '') if authorization and authorization.startswith('Bearer ') else None)
+    if tok:
+        try: 
+            payload = jose_jwt.decode(tok, auth.JWT_SECRET, algorithms=[auth.ALGO])
+            valid = True
+        except JWTErr: pass
+    if not valid:
+        raise HTTPException(401, 'Authentication required. Add ?token=YOUR_JWT to the URL.')
+    
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
