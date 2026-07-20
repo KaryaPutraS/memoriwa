@@ -220,7 +220,7 @@ function DocumentRow({ doc, selected, onToggle, onAnalyze }: { doc: Doc; selecte
   const [preview, setPreview] = useState(false);
   const isImage = doc.mime_type?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(doc.filename||'');
   const isPdf = doc.mime_type === 'application/pdf' || doc.filename?.toLowerCase().endsWith('.pdf');
-  const fileUrl = (import.meta.env.VITE_API_URL || '') + '/api/files/' + doc.id + '/raw';
+  const fileUrl = (import.meta.env.VITE_API_URL || '') + '/api/files/' + doc.id + '/raw?token=' + (getToken() || '');
   const icon = isImage ? '<svg>...</svg>' : isPdf ? 'PDF' : 'DOC';
 
   return (
