@@ -100,6 +100,21 @@ def test_vision_settings_key_never_exposed():
         repo.settings.pop('vision_base_url', None)
         repo.settings.pop('vision_model', None)
 
+def test_memory_repo_persists_to_file(tmp_path, monkeypatch):
+    """Settings/providers/docs must survive a process restart when DATA_FILE is set."""
+    import asyncio
+    from app.repository import MemoryRepository
+    monkeypatch.setenv('DATA_FILE', str(tmp_path / 'state.json'))
+    r = MemoryRepository()
+    asyncio.run(r.save_settings({'theme': 'dark', 'vision_model': 'vm-x'}))
+    asyncio.run(r.add_provider({'id': 'p1', 'name': 'p1', 'kind': 'groq'}))
+    asyncio.run(r.add_document({'id': 'doc1', 'filename': 'a.pdf', 'created_at': '2026-01-01'}))
+    # new instance (simulates restart) loads the same state
+    r2 = MemoryRepository()
+    assert asyncio.run(r2.get_settings())['vision_model'] == 'vm-x'
+    assert asyncio.run(r2.get_providers())[0]['name'] == 'p1'
+    assert asyncio.run(r2.get_document('doc1'))['filename'] == 'a.pdf'
+
 def test_provider_crud():
     h = _auth()
     r = client.post('/api/providers', headers=h, json={'name': 'test-prov', 'base_url': 'https://api.test.com', 'api_key': 'sk-123', 'model': 'gpt-4'})

@@ -27,7 +27,14 @@ function useAuthFileUrl(id: string, enabled: boolean): string {
 }
 
 function App() {
-  const [page, setPage] = useState('Inbox');
+  const PAGES=['Inbox','Files','Stats','Settings'];
+  const pageFromHash=()=>{const h=window.location.hash.slice(1);return PAGES.includes(h)?h:'Inbox'};
+  const [page, setPage] = useState(pageFromHash);
+  useEffect(()=>{
+    const f=()=>setPage(pageFromHash());
+    window.addEventListener('hashchange',f);
+    return ()=>window.removeEventListener('hashchange',f);
+  },[]);
   const [sidebar, setSidebar] = useState(false);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [token, setTok] = useState(getToken()||'');
@@ -63,7 +70,7 @@ function App() {
       <aside className="sidebar">
         <div className="sb-br"><div className="sb-lo"><Zap size={20}/></div><span>MemoriWA</span></div>
         <nav className="sb-nav">
-          {nav.map(n=><button key={n.id} className={`sb-it ${page===n.id?'on':''}`} onClick={()=>{setPage(n.id);setSidebar(false)}}><n.icon size={18}/><span>{n.label}</span></button>)}
+          {nav.map(n=><button key={n.id} className={`sb-it ${page===n.id?'on':''}`} onClick={()=>{window.location.hash=n.id;setPage(n.id);setSidebar(false)}}><n.icon size={18}/><span>{n.label}</span></button>)}
         </nav>
         <div className="sb-ft"><div className={`dot ${wahaOk?'on':'off'}`}/><span>{wahaOk?'Connected':'Offline'}</span></div>
       </aside>
@@ -73,7 +80,7 @@ function App() {
         {page==='Files' && <FilesPage docs={docs}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
-          onSave={async(s:any)=>{setSettings(await saveSettings(s));flash('Saved')}}
+          onSave={async(s:any)=>{try{setSettings(await saveSettings(s));flash('Saved')}catch{flash('Save failed')}}}
           onAdd={async(p:Prov)=>{await createProvider(p);setProvs((await getProviders()).items||[]);flash('Added')}}
           onDel={async(n:string)=>{await deleteProvider(n);setProvs((await getProviders()).items||[])}}
           onToggle={async(p:Prov)=>{await updateProvider(p.name,{name:p.name,kind:p.kind,model:p.model,api_key:'',base_url:p.base_url||'',active:!p.active});setProvs((await getProviders()).items||[]);flash(p.active?'Deactivated':'Activated')}}/>}

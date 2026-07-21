@@ -5,6 +5,10 @@ services:
     ports:
       - "127.0.0.1:8002:8000"
     env_file: .env
+    environment:
+      - DATA_FILE=/data/state.json
+    volumes:
+      - wa_data:/data
     restart: unless-stopped
     networks:
       - app-net
@@ -33,3 +37,4 @@ networks:
 
 volumes:
   waha_sessions:
+  wa_data:
