@@ -201,6 +201,14 @@ function ConnectTab() {
 
   useEffect(()=>{refresh();return()=>{if(pollRef.current)clearInterval(pollRef.current)}},[]);
 
+  // WA rotates the pairing QR roughly every 20s — keep the shown code fresh
+  // so it never expires before the user finishes scanning.
+  useEffect(()=>{
+    if(!qr||connected)return;
+    const t=setInterval(async()=>{try{const q=await getWahaQr();if(q?.qr)setQr(q.qr)}catch{}},15000);
+    return ()=>clearInterval(t);
+  },[qr,connected]);
+
   const startWithPoll=async()=>{
     await startWaha();
     let tries=0;
