@@ -1,7 +1,7 @@
 """MemoriWA Routes — single-tenant."""
 from __future__ import annotations
 import hashlib, hmac, asyncio, json, logging, os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel
@@ -169,10 +169,16 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     # Extract media
     media = _extract_media(payload)
     if not media:
-        # Check if message has body only (text)
+        # Text-only message: the first text after a burst of photos becomes
+        # their explanation and groups them (activity documentation flow).
         msg = payload.get("message") or payload.get("data") or {}
         body = msg.get("body", "") if isinstance(msg, dict) else ""
-        if body and not media:
+        if body:
+            attached = await _attach_caption(repo, msg, body, eid)
+            if attached:
+                for d in attached:
+                    await ws_manager.broadcast({"type": "document.updated", "data": d})
+                return {"accepted": True, "caption_group": eid, "images": len(attached), "event_id": eid}
             return {"accepted": False, "reason": "text-only message", "event_id": eid}
         return {"accepted": False, "reason": "no media found", "event_id": eid}
     
@@ -216,7 +222,9 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
     settings = await repo.get_settings() or {}
-    if settings.get("auto_analyze"):
+    # Images are not auto-analyzed: activity photos wait for their caption
+    # text and then human verification instead of AI analysis.
+    if settings.get("auto_analyze") and not mime.lower().startswith("image/"):
         # WAHA only keeps media files briefly — analyze immediately while
         # the bytes are still downloadable.
         doc["status"] = "processing"
@@ -229,6 +237,93 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     return {"accepted": True, "document_id": did, "event_id": eid}
 
 # Documents
+CAPTION_WINDOW_MINUTES = 10
+
+async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
+    """Attach a text message as explanation to the recent ungrouped images
+    from the same sender (first text after a photo burst groups them)."""
+    sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "")
+    if "@" in sender:
+        sender = sender.split("@")[0]
+    if not sender:
+        return []
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=CAPTION_WINDOW_MINUTES)
+    result = await repo.get_documents(limit=100)
+    cands: list[dict] = []
+    for d in result["items"]:
+        if d.get("sender") != sender:
+            continue
+        if not str(d.get("mime_type") or "").startswith("image/"):
+            continue
+        if d.get("status") == "analyzed":
+            continue
+        meta = d.get("metadata") or {}
+        if meta.get("group_id") or meta.get("explanation"):
+            continue
+        try:
+            ts = datetime.fromisoformat(str(d.get("created_at")))
+        except Exception:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts < cutoff:
+            continue
+        cands.append(d)
+    for d in cands:
+        meta = dict(d.get("metadata") or {})
+        meta["explanation"] = body
+        meta["group_id"] = eid
+        d["metadata"] = meta
+        await repo.update_document(d["id"], d)
+    return cands
+
+class VerifyRequest(BaseModel): ids: list[str]; folder: str = ""
+class GroupUpdateRequest(BaseModel): explanation: str | None = None; folder: str | None = None
+
+@router.post("/api/documents/verify")
+async def verify_documents(body: VerifyRequest, user: str=Depends(auth.get_current_user)):
+    """Human-verified docs: identity comes from the explanation, no AI run."""
+    repo = await get_repository()
+    done = 0
+    for did in body.ids:
+        doc = await repo.get_document(did)
+        if not doc: continue
+        meta = dict(doc.get("metadata") or {})
+        expl = str(meta.get("explanation") or meta.get("caption") or doc.get("filename") or "Dokumentasi")
+        if body.folder:
+            meta["folder"] = body.folder
+        meta["identity"] = {
+            "title": expl[:80],
+            "doc_type": meta.get("folder") or "dokumentasi kegiatan",
+            "summary": expl,
+            "tags": meta.get("tags") or [],
+        }
+        meta["progress"] = 100
+        doc["metadata"] = meta
+        doc["status"] = "analyzed"
+        await repo.update_document(did, doc)
+        await ws_manager.broadcast({"type": "document.updated", "data": doc})
+        done += 1
+    return {"verified": done}
+
+@router.put("/api/documents/group/{group_id}")
+async def update_group(group_id: str, body: GroupUpdateRequest, user: str=Depends(auth.get_current_user)):
+    """Edit the explanation and/or folder of every doc in a photo group."""
+    repo = await get_repository()
+    result = await repo.get_documents(limit=100)
+    n = 0
+    for doc in result["items"]:
+        if (doc.get("metadata") or {}).get("group_id") != group_id: continue
+        meta = dict(doc.get("metadata") or {})
+        if body.explanation is not None: meta["explanation"] = body.explanation
+        if body.folder: meta["folder"] = body.folder
+        doc["metadata"] = meta
+        await repo.update_document(doc["id"], doc)
+        await ws_manager.broadcast({"type": "document.updated", "data": doc})
+        n += 1
+    if not n: raise HTTPException(404)
+    return {"updated": n}
+
 @router.get("/api/documents")
 async def list_documents(q: str|None=None, status: str|None=None, limit: int=50, user: str=Depends(auth.get_current_user)):
     return await (await get_repository()).get_documents(q=q, status=status, limit=limit)

@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
+import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument } from './api';
+import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -55,6 +55,8 @@ function App() {
   const refreshDocs = ()=>getDocuments().then(d=>setDocs(d.items||[]));
   const analyze = async (id:string)=>{ flash('Analyzing...'); await analyzeDocument(id).catch(()=>{}); refreshDocs(); flash('Done!'); };
   const deleteDoc = async (id:string)=>{ await deleteDocument(id).catch(()=>{}); setDocs(ds=>ds.filter(d=>d.id!==id)); flash('Deleted'); };
+  const verifyDocs = async (ids:string[], folder:string)=>{ await verifyDocuments(ids, folder).catch(()=>{}); refreshDocs(); flash('Saved to Files'); };
+  const saveGroup = async (gid:string, explanation:string, folder:string)=>{ await updateGroup(gid, {explanation, folder}).catch(()=>{}); refreshDocs(); flash('Saved'); };
   const doLogout = ()=>{ logout(); setTok(''); };
 
   // Branding: apply custom favicon saved in Settings
@@ -105,7 +107,7 @@ function App() {
       </aside>
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
-        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc}/>}
+        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc} verify={verifyDocs} saveGroup={saveGroup}/>}
         {page==='Files' && <FilesPage docs={docs} analyze={analyze}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
@@ -130,17 +132,23 @@ function LoginScreen({onLogin}:{onLogin:(t:string)=>void}) {
   </div></div>;
 }
 
-function InboxPage({docs,refreshDocs,analyze,del}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void}) {
+function InboxPage({docs,refreshDocs,analyze,del,verify,saveGroup}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void;verify:(ids:string[],folder:string)=>void;saveGroup:(gid:string,expl:string,folder:string)=>void}) {
   const [q,sq]=useState(''),[f,sf]=useState('All'),[sel,ssel]=useState<string[]>([]);
   const fd=React.useMemo(()=>{
     // Inbox is the work queue: analyzed files live under Files instead.
     let d=docs.filter(x=>x.status!=='analyzed');
     if(f==='PDF')d=d.filter(x=>x.mime_type==='application/pdf');
     if(f==='IMAGE')d=d.filter(x=>x.mime_type?.startsWith('image/'));
-    if(q){const ql=q.toLowerCase();d=d.filter(x=>x.filename?.toLowerCase().includes(ql)||x.sender?.includes(q)||(JSON.stringify(x.metadata?.identity||'')+' '+(x.metadata?.extracted_text||'')).toLowerCase().includes(ql));}
+    if(q){const ql=q.toLowerCase();d=d.filter(x=>x.filename?.toLowerCase().includes(ql)||x.sender?.includes(q)||(JSON.stringify(x.metadata?.identity||'')+' '+(x.metadata?.extracted_text||'')+' '+(x.metadata?.explanation||'')).toLowerCase().includes(ql));}
     return d;
   },[docs,q,f]);
   const toggle=(id:string)=>ssel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  // Photo bursts grouped by their caption text appear as one review card.
+  const grouped=React.useMemo(()=>{
+    const g:Record<string,Doc[]>={};const s:Doc[]=[];
+    fd.forEach(d=>{const gid=d.metadata?.group_id;if(gid)(g[gid]=g[gid]||[]).push(d);else s.push(d)});
+    return {g:Object.entries(g),s};
+  },[fd]);
   return <div className="pg">
     <div className="mx">
       <M n={docs.length} l="Total" c="#c8f31d"/>
@@ -157,12 +165,41 @@ function InboxPage({docs,refreshDocs,analyze,del}:{docs:Doc[];refreshDocs:()=>vo
     <div className="cd">
       <div className="cd-hd"><b>Documents ({fd.length})</b></div>
       {fd.length===0?<div className="em"><FileText size={32}/><b>No documents</b><p>Send a file or image to your WhatsApp.</p></div>
-      :fd.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)}/>)}
+      :<>{grouped.g.map(([gid,gdocs])=><GroupCard key={gid} gid={gid} docs={gdocs} onVerify={verify} onSave={saveGroup}/>)}
+      {grouped.s.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)}/>)}</>}
     </div>
   </div>;
 }
 
 function M({n,l,c}:{n:number;l:string;c:string}) { return <div className="mt"><span className="mt-n" style={{color:c}}>{n}</span><span className="mt-l">{l}</span></div>; }
+
+// A photo burst + its WhatsApp caption, waiting for human verification.
+function GroupCard({gid,docs,onVerify,onSave}:{gid:string;docs:Doc[];onVerify:(ids:string[],folder:string)=>void;onSave:(gid:string,expl:string,folder:string)=>void}) {
+  const first=docs[0]||{};
+  const [edit,setEdit]=useState(false);
+  const [expl,setExpl]=useState(first.metadata?.explanation||'');
+  const [folder,setFolder]=useState(first.metadata?.folder||'');
+  useEffect(()=>{setExpl(first.metadata?.explanation||'');setFolder(first.metadata?.folder||'')},[first.metadata?.explanation,first.metadata?.folder]);
+  const ids=docs.map(d=>d.id);
+  return <div className="dw">
+    <div className="dr" onClick={()=>setEdit(!edit)}>
+      <div className="di"><Image size={17}/></div>
+      <div className="dn"><div className="dnm">{first.metadata?.explanation||'Photo group'}</div><div className="dnt">{docs.length} foto · {first.sender}{first.metadata?.folder?' · '+first.metadata.folder:''}</div></div>
+      <span className="ds" style={{background:'#f59e0b18',color:'#f59e0b',borderColor:'#f59e0b'}}>review</span>
+      <button className="bi" title="Verify & save to Files" onClick={e=>{e.stopPropagation();onVerify(ids,folder)}}><Check size={14}/></button>
+      <button className="bi" title="Edit explanation / folder" onClick={e=>{e.stopPropagation();setEdit(!edit)}}><Pencil size={13}/></button>
+      <ChevronRight size={15} className={`dc ${edit?'rt':''}`}/>
+    </div>
+    {edit&&<div className="dp"><div className="p4 s3">
+      <div className="fi"><label>Explanation</label><textarea className="inp" rows={3} value={expl} onChange={e=>setExpl(e.target.value)}/></div>
+      <div className="fi"><label>Folder (manual, optional)</label><input className="inp" value={folder} onChange={e=>setFolder(e.target.value)} placeholder="mis. dokumentasi kegiatan"/></div>
+      <div className="fl g2">
+        <button className="btn sm" onClick={()=>onSave(gid,expl,folder)}>Save changes</button>
+        <button className="btn pr" onClick={()=>onVerify(ids,folder)}><Check size={12}/> Verify & save to Files</button>
+      </div>
+    </div></div>}
+  </div>;
+}
 
 function DocRow({doc,sel,toggle,analyze,del}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void}) {
   const [o,so]=useState(false);
@@ -197,6 +234,8 @@ function FilesPage({docs,analyze}:{docs:Doc[];analyze:(id:string)=>void}) {
   // generic/empty types fall back to the first AI tag before 'Uncategorized'.
   const GENERIC=['','other','unknown','uncategorized','document','dokumen','file','general','lainnya','misc'];
   const folderOf=(d:Doc)=>{
+    const mf=(d.metadata?.folder||'').trim();
+    if(mf)return mf;  // manually assigned folder wins
     const t=(d.metadata?.identity?.doc_type||'').trim();
     if(t&&!GENERIC.includes(t.toLowerCase()))return t;
     const tag=(d.metadata?.identity?.tags||[])[0];

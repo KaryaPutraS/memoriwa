@@ -111,6 +111,34 @@ def test_vision_settings_key_never_exposed():
         repo.settings.pop('vision_base_url', None)
         repo.settings.pop('vision_model', None)
 
+def test_image_grouping_and_verify():
+    """Text after a photo burst groups the images; verify files them without AI."""
+    h = _auth()
+    _wh('g1', 'foto1.jpg', 'image/jpeg', sender='628999')
+    _wh('g2', 'foto2.jpg', 'image/jpeg', sender='628999')
+    # first text from the same sender becomes the explanation
+    payload = {'id': 'evt-gtext', 'session': 'default', 'message': {'id': 'gtext', 'from': '628999', 'body': 'Giat patroli 21 Juli'}}
+    r = client.post('/webhook/waha', json=payload)
+    assert r.json().get('accepted') is True and r.json().get('images') == 2
+    d1 = client.get('/api/documents/g1', headers=h).json()
+    assert d1['metadata']['explanation'] == 'Giat patroli 21 Juli'
+    gid = d1['metadata']['group_id']
+    assert gid and client.get('/api/documents/g2', headers=h).json()['metadata']['group_id'] == gid
+    # text without pending images is still rejected as text-only
+    r2 = client.post('/webhook/waha', json={'id': 'evt-solo', 'message': {'id': 'solo1', 'from': '628000', 'body': 'halo'}})
+    assert r2.json().get('accepted') is False
+    # edit explanation + manual folder for the whole group
+    r3 = client.put(f'/api/documents/group/{gid}', headers=h, json={'explanation': 'Giat bhakti sosial', 'folder': 'kegiatan sosial'})
+    assert r3.status_code == 200 and r3.json()['updated'] == 2
+    # verify -> analyzed, identity from explanation, manual folder as doc_type
+    r4 = client.post('/api/documents/verify', headers=h, json={'ids': ['g1', 'g2']})
+    assert r4.json()['verified'] == 2
+    d1 = client.get('/api/documents/g1', headers=h).json()
+    assert d1['status'] == 'analyzed'
+    assert d1['metadata']['identity']['summary'] == 'Giat bhakti sosial'
+    assert d1['metadata']['identity']['doc_type'] == 'kegiatan sosial'
+    assert d1['metadata']['folder'] == 'kegiatan sosial'
+
 def test_webhook_auto_analyze():
     """With auto_analyze on, webhook docs go straight to processing."""
     h = _auth()
