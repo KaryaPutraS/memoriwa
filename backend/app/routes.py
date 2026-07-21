@@ -215,6 +215,17 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     }
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
+    settings = await repo.get_settings() or {}
+    if settings.get("auto_analyze"):
+        # WAHA only keeps media files briefly — analyze immediately while
+        # the bytes are still downloadable.
+        doc["status"] = "processing"
+        await repo.update_document(did, doc)
+        await ws_manager.broadcast({"type": "document.updated", "data": doc})
+        async def _auto():
+            await analysis.analyze_document(doc, waha, repo,
+                on_update=lambda d: ws_manager.broadcast({"type": "document.updated", "data": d}))
+        asyncio.create_task(_auto())
     return {"accepted": True, "document_id": did, "event_id": eid}
 
 # Documents

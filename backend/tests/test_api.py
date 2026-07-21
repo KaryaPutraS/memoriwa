@@ -111,6 +111,52 @@ def test_vision_settings_key_never_exposed():
         repo.settings.pop('vision_base_url', None)
         repo.settings.pop('vision_model', None)
 
+def test_webhook_auto_analyze():
+    """With auto_analyze on, webhook docs go straight to processing."""
+    h = _auth()
+    client.put('/api/settings', headers=h, json={'theme': 'dark', 'language': 'id', 'auto_analyze': True})
+    try:
+        r = _wh('d-auto', 'auto.pdf')
+        assert r.get('accepted') is True
+        doc = client.get('/api/documents/d-auto', headers=h).json()
+        assert doc['status'] in ('processing', 'failed')  # fetch is blocked in tests, either is fine
+    finally:
+        client.put('/api/settings', headers=h, json={'theme': 'dark', 'language': 'id', 'auto_analyze': False})
+
+def test_office_text_extraction():
+    """docx/pptx text is pulled from the OOXML zip without extra deps."""
+    import io, zipfile
+    from app import analysis
+
+    def make_zip(files: dict) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zf:
+            for name, content in files.items():
+                zf.writestr(name, content)
+        return buf.getvalue()
+
+    pptx = make_zip({'ppt/slides/slide1.xml': '<p:sld><a:t>Hello</a:t> <a:t>World &amp; Co</a:t></p:sld>',
+                     'ppt/slides/slide2.xml': '<p:sld><a:t>Second slide</a:t></p:sld>'})
+    text = analysis.office_text(pptx, 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    assert 'Hello World & Co' in text and 'Second slide' in text
+
+    docx = make_zip({'word/document.xml': '<w:doc><w:p><w:r><w:t>Isi dokumen</w:t></w:r></w:p></w:doc>'})
+    assert analysis.office_text(docx, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') == 'Isi dokumen'
+
+    # not a zip / unknown office mime -> empty, never raises
+    assert analysis.office_text(b'not a zip', 'application/vnd.openxmlformats-officedocument.presentationml.presentation') == ''
+    assert analysis.office_text(pptx, 'application/pdf') == ''
+
+def test_office_extract_via_pipeline():
+    """extract_text routes OOXML mimes to office_text."""
+    import asyncio, io, zipfile
+    from app import analysis
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as zf:
+        zf.writestr('ppt/slides/slide1.xml', '<p:sld><a:t>Slide content</a:t></p:sld>')
+    text, method = asyncio.run(analysis.extract_text(buf.getvalue(), 'application/vnd.openxmlformats-officedocument.presentationml.presentation', None))
+    assert method == 'office-text' and 'Slide content' in text
+
 def test_memory_repo_persists_to_file(tmp_path, monkeypatch):
     """Settings/providers/docs must survive a process restart when DATA_FILE is set."""
     import asyncio

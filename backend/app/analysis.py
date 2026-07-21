@@ -175,6 +175,37 @@ async def _ocr_image_groq(image_bytes: bytes, mime: str, cfg: dict) -> str:
     }], max_tokens=4096)
 
 
+def office_text(data: bytes, mime: str) -> str:
+    """Dependency-free text extraction from OOXML files (docx/pptx/xlsx)."""
+    import zipfile, io, re, html
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except Exception:
+        return ""
+    if "wordprocessingml" in mime:
+        names = [n for n in zf.namelist() if n == "word/document.xml"]
+        tag = "w:t"
+    elif "presentationml" in mime:
+        names = sorted(n for n in zf.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+        tag = "a:t"
+    elif "spreadsheetml" in mime:
+        names = [n for n in zf.namelist() if n == "xl/sharedStrings.xml"]
+        tag = "t"
+    else:
+        return ""
+    pat = re.compile(rf"<{tag}(?:\s[^>]*)?>(.*?)</{tag}>", re.S)
+    parts: list[str] = []
+    for n in names:
+        try:
+            xml = zf.read(n).decode("utf-8", "ignore")
+        except Exception:
+            continue
+        texts = [html.unescape(t) for t in pat.findall(xml) if t.strip()]
+        if texts:
+            parts.append(" ".join(texts))
+    return "\n\n".join(parts).strip()
+
+
 async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, str]:
     """Returns (text, method). Never raises on OCR failure — returns what it got."""
     if mime == "application/pdf":
@@ -200,6 +231,9 @@ async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, s
             except Exception as e:
                 logger.warning("Groq vision OCR failed, falling back to tesseract: %s", e)
         return _tesseract(data), "tesseract"
+    if "officedocument" in mime:
+        text = office_text(data, mime)
+        return (text, "office-text") if text else ("", "unsupported")
     return "", "unsupported"
 
 
@@ -216,10 +250,17 @@ def parse_identity(raw: str) -> dict:
 
 
 async def build_identity(text: str, cfg: dict) -> dict:
-    raw = await _chat(cfg, cfg["text_model"], [
-        {"role": "user", "content": IDENTITY_PROMPT + text[:12000]},
-    ], max_tokens=1024)
-    return parse_identity(raw)
+    msgs = [{"role": "user", "content": IDENTITY_PROMPT + text[:12000]}]
+    raw = await _chat(cfg, cfg["text_model"], msgs, max_tokens=1024)
+    try:
+        return parse_identity(raw)
+    except ValueError:
+        # One retry with an explicit JSON-only instruction.
+        raw = await _chat(cfg, cfg["text_model"], [
+            {"role": "system", "content": "You answer with a single raw JSON object only — no prose, no markdown."},
+            *msgs,
+        ], max_tokens=1024)
+        return parse_identity(raw)
 
 
 # ---------- Orchestration ----------
@@ -252,6 +293,18 @@ async def analyze_document(doc: dict, waha, repo, on_update=None) -> dict:
         meta["extraction_method"] = method
         meta["extracted_text"] = text[:MAX_STORED_TEXT]
         if not text.strip():
+            if doc.get("mime_type", "").startswith("image/"):
+                # A photo without readable text is not a failure — file it
+                # with a minimal identity so it leaves the Inbox queue.
+                meta["identity"] = {
+                    "title": doc.get("filename") or meta.get("caption") or "Image",
+                    "doc_type": "image",
+                    "summary": "Gambar tanpa teks yang dapat dibaca.",
+                    "tags": ["gambar", "foto"],
+                }
+                doc["status"] = "analyzed"
+                await _progress(100)
+                return doc
             raise RuntimeError(f"no text extracted (method={method})")
         await _progress(65)
         if cfg:
