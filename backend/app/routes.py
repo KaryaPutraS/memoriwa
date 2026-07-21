@@ -107,10 +107,19 @@ async def waha_qr(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
     qr = await wh.get_qr()
     if qr is None:
+        # Session missing/stopped/FAILED — (re)start it and wait for the
+        # engine to reach SCAN_QR_CODE (Chromium boot can take ~10s).
         try:
+            session = await wh.get_session()
+            if session and session.get("status") == "FAILED":
+                try: await wh.stop()
+                except Exception: pass
             await waha_start(user=user)
-            import asyncio as _a; await _a.sleep(3)
-            qr = await wh.get_qr()
+            import asyncio as _a
+            for _ in range(8):
+                await _a.sleep(2)
+                qr = await wh.get_qr()
+                if qr: break
         except Exception: pass
     if qr is None: raise HTTPException(404, "QR not available yet")
     return {"qr": qr}
