@@ -63,8 +63,11 @@ async def _llm_config(repo) -> dict | None:
                 return {
                     "base_url": (p.get("base_url") or GROQ_BASE).rstrip("/"),
                     "api_key": key,
+                    # Vision OCR needs a dedicated vision model for Groq;
+                    # other providers use their configured model for both.
                     "ocr_model": GROQ_OCR_MODEL if kind == "groq" else (p.get("model") or GROQ_OCR_MODEL),
-                    "text_model": GROQ_TEXT_MODEL if kind == "groq" else (p.get("model") or GROQ_TEXT_MODEL),
+                    # Identity/summary always uses the model chosen in Settings.
+                    "text_model": p.get("model") or GROQ_TEXT_MODEL,
                 }
     env_key = os.getenv("GROQ_API_KEY", "")
     if env_key:

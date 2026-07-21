@@ -91,6 +91,21 @@ def test_analysis():
     r = client.post('/api/analysis/run', headers=_auth())
     assert r.status_code == 200
 
+def test_llm_config_uses_settings_model():
+    """Identity/summary must use the model configured on the active provider."""
+    import asyncio
+    from app import analysis
+    from app.repository import get_repository
+    h = _auth()
+    r = client.post('/api/providers', headers=h, json={'name': 'cfg-test', 'kind': 'groq', 'base_url': 'https://api.groq.com/openai/v1', 'api_key': 'gsk-fake', 'model': 'my-chosen-model', 'active': True})
+    assert r.status_code == 201
+    try:
+        cfg = asyncio.run(analysis._llm_config(asyncio.run(get_repository())))
+        assert cfg is not None
+        assert cfg['text_model'] == 'my-chosen-model'
+    finally:
+        client.delete('/api/providers/cfg-test', headers=h)
+
 def test_analysis_pipeline_helpers():
     """Unit tests for the free OCR/identity pipeline (no network needed)."""
     import asyncio
