@@ -77,7 +77,7 @@ function App() {
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
         {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze}/>}
-        {page==='Files' && <FilesPage docs={docs}/>}
+        {page==='Files' && <FilesPage docs={docs} analyze={analyze}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
           onSave={async(s:any)=>{try{setSettings(await saveSettings(s));flash('Saved')}catch{flash('Save failed')}}}
@@ -159,12 +159,33 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
     }</div>;
 }
 
-function FilesPage({docs}:{docs:Doc[]}) {
-  return <div className="pg"><div className="mx"><M n={docs.filter(d=>d.status==='analyzed').length} l="Analyzed" c="#00d4aa"/><M n={docs.filter(d=>d.status==='unanalyzed').length} l="Pending" c="#999"/></div>
-    <div className="cd"><div className="cd-hd"><b>All Files ({docs.length})</b></div>
-      {docs.length===0?<div className="em"><Folder size={32}/><b>Empty</b><p>Analyze files to see them here.</p></div>
-      :docs.slice(0,20).map(d=><div key={d.id} className="fr"><FileText size={15}/><span className="f1">{d.filename}</span><span className="mu xs">{d.sender}</span><ChevronRight size={13}/></div>)}
-    </div></div>;
+function FilesPage({docs,analyze}:{docs:Doc[];analyze:(id:string)=>void}) {
+  const [q,sq]=useState(''),[folder,setFolder]=useState('');
+  const folderOf=(d:Doc)=>d.metadata?.identity?.doc_type||'Uncategorized';
+  const ql=q.trim().toLowerCase();
+  const match=(d:Doc)=>!ql||(d.filename||'').toLowerCase().includes(ql)||(JSON.stringify(d.metadata?.identity||'')+' '+(d.metadata?.extracted_text||'')).toLowerCase().includes(ql);
+  const analyzed=docs.filter(d=>d.status==='analyzed');
+  const folders=React.useMemo(()=>{
+    const m:Record<string,number>={};
+    analyzed.forEach(d=>{const f=folderOf(d);m[f]=(m[f]||0)+1});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  },[docs]);
+  const list=(folder?analyzed.filter(d=>folderOf(d)===folder):docs).filter(match);
+  return <div className="pg">
+    <div className="mx"><M n={analyzed.length} l="Analyzed" c="#00d4aa"/><M n={folders.length} l="Folders" c="#c8f31d"/><M n={docs.filter(d=>d.status==='unanalyzed').length} l="Pending" c="#999"/></div>
+    <div className="br">
+      <div className="sbx"><Search size={15}/><input placeholder="Search name, content, or identity..." value={q} onChange={e=>sq(e.target.value)}/></div>
+      {folder&&<button className="btn sm" onClick={()=>setFolder('')}>Back</button>}
+    </div>
+    {!folder&&!ql&&<div className="cd"><div className="cd-hd"><b>Folders ({folders.length})</b></div>
+      {folders.length===0?<div className="em"><Folder size={32}/><b>No folders yet</b><p>Analyze files in Inbox — folders are created automatically from the detected document type.</p></div>
+      :folders.map(([f,n])=><div key={f} className="fr" style={{cursor:'pointer'}} onClick={()=>setFolder(f)}><Folder size={15}/><span className="f1">{f}</span><span className="mu xs">{n} file{n>1?'s':''}</span><ChevronRight size={13}/></div>)}
+    </div>}
+    {(folder||ql)&&<div className="cd"><div className="cd-hd"><b>{folder||'Search results'} ({list.length})</b></div>
+      {list.length===0?<div className="em"><FileText size={32}/><b>No files found</b></div>
+      :list.map(d=><DocRow key={d.id} doc={d} sel={[]} toggle={()=>{}} analyze={()=>analyze(d.id)}/>)}
+    </div>}
+  </div>;
 }
 
 function StatsPage({docs}:{docs:Doc[]}) {
