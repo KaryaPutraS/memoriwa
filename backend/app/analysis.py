@@ -76,6 +76,30 @@ async def _llm_config(repo) -> dict | None:
     return None
 
 
+async def _vision_config(repo) -> dict | None:
+    """Dedicated vision/OCR endpoint configured in Settings -> AI.
+
+    When set, this overrides the active provider for image OCR only;
+    identity/summary still uses _llm_config(). Defaults: Groq base URL and
+    the Groq vision model, so only an API key is strictly required.
+    """
+    s = await repo.get_settings() or {}
+    token = s.get("vision_api_key") or ""
+    if not token:
+        return None
+    key = auth.decrypt_api_key(token)
+    if not key:
+        return None
+    return {
+        "base_url": (s.get("vision_base_url") or GROQ_BASE).rstrip("/"),
+        "api_key": key,
+        "ocr_model": s.get("vision_model") or GROQ_OCR_MODEL,
+        # extract_text only reads ocr_model/base_url/api_key; text_model is
+        # unused here but kept for shape compatibility with _llm_config().
+        "text_model": GROQ_TEXT_MODEL,
+    }
+
+
 async def _chat(cfg: dict, model: str, messages: list, max_tokens: int = 2048) -> str:
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
@@ -206,10 +230,11 @@ async def analyze_document(doc: dict, waha, repo) -> dict:
     meta = dict(doc.get("metadata") or {})
     try:
         cfg = await _llm_config(repo)
+        ocr_cfg = (await _vision_config(repo)) or cfg
         data = await fetch_doc_bytes(doc, waha)
         if not data:
             raise RuntimeError("file bytes unavailable")
-        text, method = await extract_text(data, doc.get("mime_type", ""), cfg)
+        text, method = await extract_text(data, doc.get("mime_type", ""), ocr_cfg)
         meta["extraction_method"] = method
         meta["extracted_text"] = text[:MAX_STORED_TEXT]
         if not text.strip():

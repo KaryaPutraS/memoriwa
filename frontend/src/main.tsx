@@ -176,7 +176,7 @@ function SettingsPage({settings,provs,onSave,onAdd,onDel,onToggle}:any) {
     {[{id:'connect',l:'Connection'},{id:'general',l:'General'},{id:'ai',l:'AI'}].map(t=><button key={t.id} className={`tb-btn ${tab===t.id?'on':''}`} onClick={()=>setTab(t.id)}>{t.l}</button>)}</div>
     {tab==='connect'&&<ConnectTab/>}
     {tab==='general'&&<div className="cd"><div className="cd-hd"><b>General</b></div><div className="p4 s3"><FL label="Webhook Secret" val={loc.webhook_secret||''} onChange={(v:string)=>setLoc({...loc,webhook_secret:v})}/><FL label="Retention (days)" val={loc.retention_days||'90'} onChange={(v:string)=>setLoc({...loc,retention_days:v})}/><button className="btn pr" onClick={()=>onSave(loc)}>Save</button></div></div>}
-    {tab==='ai'&&<AITab pv={provs} onAdd={onAdd} onDel={onDel} onToggle={onToggle}/>}
+    {tab==='ai'&&<><VisionCard settings={settings} onSave={onSave}/><AITab pv={provs} onAdd={onAdd} onDel={onDel} onToggle={onToggle}/></>}
   </div>;
 }
 
@@ -239,6 +239,29 @@ function AITab({pv,onAdd,onDel,onToggle}:{pv:Prov[];onAdd:(p:Prov)=>void;onDel:(
     </div><FL label="API Key" val={a} onChange={(v:string)=>sa(v)} pw/>{u&&<FL label="Base URL" val={u} onChange={(v:string)=>su(v)}/>}<button className="btn pr" onClick={()=>{if(!a)return;onAdd({name:`${k}-${Date.now()}`,kind:k,model:m,api_key:a,base_url:u||'',active:true});sa('');ss(false)}}><Plus size={13}/>Add</button></div>}
     {pv.length===0?<div className="em"><Settings size={32}/><b>No providers</b><p>Add at least one.</p></div>:pv.map(p=><div key={p.name} className="pr-row"><div><b>{p.kind}</b><span className="ml2 xs mu">{p.model}</span></div><div className="fl g2"><span className={`bd ${p.active?'on':'off'}`}>{p.active?'Active':'Off'}</span><button className="btn sm" onClick={()=>onToggle(p)}>{p.active?'Deactivate':'Activate'}</button><button className="bi" onClick={()=>onDel(p.name)}><Trash2 size={13}/></button></div></div>)}
   </div>;
+}
+
+function VisionCard({settings,onSave}:{settings:any;onSave:(s:any)=>void}) {
+  const P:Record<string,{l:string;u:string;m:string}>={
+    '':{l:'Default (active provider / env)',u:'',m:''},
+    groq:{l:'Groq — Llama 4 Scout (free tier)',u:'https://api.groq.com/openai/v1',m:'meta-llama/llama-4-scout-17b-16e-instruct'},
+    gemini:{l:'Gemini 2.5 Flash (free tier)',u:'https://generativelanguage.googleapis.com/v1beta',m:'gemini-2.5-flash'},
+    openai:{l:'OpenAI — GPT-5.5',u:'https://api.openai.com/v1',m:'gpt-5.5'},
+    custom:{l:'Custom',u:'',m:''}};
+  const [pk,setPk]=useState('');
+  const [b,sb]=useState(settings?.vision_base_url||'');
+  const [m,sm]=useState(settings?.vision_model||'');
+  const [k,sk]=useState('');
+  useEffect(()=>{sb(settings?.vision_base_url||'');sm(settings?.vision_model||'')},[settings?.vision_base_url,settings?.vision_model]);
+  const pick=(v:string)=>{setPk(v);if(P[v]){sb(P[v].u);sm(P[v].m)}};
+  return <div className="cd"><div className="cd-hd"><b>Vision / OCR API</b></div><div className="p4 s3">
+    <p className="xs mu">Used to read images &amp; scanned documents. Leave empty to use the active provider or server env key. The API key is stored encrypted and never shown again.</p>
+    <FL label="Preset" val={pk} onChange={pick} sl opts={Object.keys(P).map(x=>({v:x,l:P[x].l}))}/>
+    <FL label="Base URL" val={b} onChange={(v:string)=>sb(v)}/>
+    <FL label="Vision Model" val={m} onChange={(v:string)=>sm(v)}/>
+    <div className="fi"><label>API Key {settings?.vision_api_key_set&&<span className="xs mu">(saved — enter to replace)</span>}</label><input className="inp" type="password" value={k} onChange={e=>sk(e.target.value)} placeholder={settings?.vision_api_key_set?'••••••••':'API key'}/></div>
+    <button className="btn pr" onClick={()=>{onSave({...settings,vision_base_url:b,vision_model:m,vision_api_key:k});sk('')}}>Save</button>
+  </div></div>;
 }
 
 function FL({label,val,onChange,sl,opts,pw}:{label:string;val:string;onChange:(v:string)=>void;sl?:boolean;opts?:{v:string;l:string}[];pw?:boolean}) {

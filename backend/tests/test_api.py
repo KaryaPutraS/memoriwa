@@ -67,6 +67,39 @@ def test_settings():
     r = client.put('/api/settings', headers=_auth(), json={'theme': 'dark', 'language': 'en', 'auto_analyze': False})
     assert r.status_code == 200
 
+def test_vision_settings_key_never_exposed():
+    """Vision OCR config: key is write-only, model/base_url round-trip."""
+    import asyncio
+    from app import analysis
+    from app.repository import get_repository
+    h = _auth()
+    r = client.put('/api/settings', headers=h, json={
+        'theme': 'dark', 'language': 'en', 'auto_analyze': False,
+        'vision_base_url': 'https://v.test/v1', 'vision_model': 'vm-x', 'vision_api_key': 'sk-vis'})
+    assert r.status_code == 200
+    body = r.json()
+    assert 'vision_api_key' not in body and 'sk-vis' not in str(body)
+    assert body.get('vision_api_key_set') is True
+    # GET also never leaks the key
+    g = client.get('/api/settings', headers=h).json()
+    assert 'vision_api_key' not in g and 'sk-vis' not in str(g)
+    assert g.get('vision_api_key_set') is True
+    # _vision_config resolves the stored config
+    repo = asyncio.run(get_repository())
+    cfg = asyncio.run(analysis._vision_config(repo))
+    assert cfg is not None
+    assert cfg['ocr_model'] == 'vm-x'
+    assert cfg['base_url'] == 'https://v.test/v1'
+    assert cfg['api_key'] == 'sk-vis'
+    # PUT without a key keeps the stored one
+    r = client.put('/api/settings', headers=h, json={'theme': 'dark', 'language': 'en', 'auto_analyze': False})
+    assert r.json().get('vision_api_key_set') is True
+    # cleanup: drop the test key straight from the in-memory store
+    if hasattr(repo, 'settings'):
+        repo.settings.pop('vision_api_key', None)
+        repo.settings.pop('vision_base_url', None)
+        repo.settings.pop('vision_model', None)
+
 def test_provider_crud():
     h = _auth()
     r = client.post('/api/providers', headers=h, json={'name': 'test-prov', 'base_url': 'https://api.test.com', 'api_key': 'sk-123', 'model': 'gpt-4'})

@@ -20,7 +20,11 @@ def get_waha() -> WAHAClient:
 
 class LoginRequest(BaseModel): username: str; password: str
 class ProviderRequest(BaseModel): name: str; base_url: str = ""; api_key: str = ""; model: str = ""; active: bool | None = None
-class SettingsRequest(BaseModel): theme: str = "system"; language: str = "id"; auto_analyze: bool = False
+class SettingsRequest(BaseModel):
+    theme: str = "system"; language: str = "id"; auto_analyze: bool = False
+    # Dedicated vision/OCR endpoint (OpenAI-compatible). vision_api_key is
+    # write-only: never returned by GET /api/settings.
+    vision_base_url: str = ""; vision_model: str = ""; vision_api_key: str = ""
 
 PROVIDER_PRESETS = [
     {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-5.5","gpt-5.4"]},
@@ -252,12 +256,23 @@ async def get_stats(user: str=Depends(auth.get_current_user)):
 
 @router.get("/api/settings")
 async def get_settings(user: str=Depends(auth.get_current_user)):
-    s = await (await get_repository()).get_settings()
-    return s or SettingsRequest().model_dump()
+    s = dict(await (await get_repository()).get_settings() or SettingsRequest().model_dump())
+    s["vision_api_key_set"] = bool(s.get("vision_api_key"))
+    s.pop("vision_api_key", None)
+    return s
 
 @router.put("/api/settings")
 async def save_settings(body: SettingsRequest, user: str=Depends(auth.get_current_user)):
-    return await (await get_repository()).save_settings(body.model_dump())
+    data = body.model_dump()
+    if data["vision_api_key"]:
+        data["vision_api_key"] = auth.encrypt_api_key(data["vision_api_key"])
+    else:
+        data.pop("vision_api_key")  # keep the previously stored key
+    s = await (await get_repository()).save_settings(data)
+    s = dict(s)
+    s["vision_api_key_set"] = bool(s.get("vision_api_key"))
+    s.pop("vision_api_key", None)
+    return s
 
 @router.get("/api/providers")
 async def list_providers(user: str=Depends(auth.get_current_user)):
