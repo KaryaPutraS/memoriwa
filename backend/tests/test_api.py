@@ -204,3 +204,29 @@ def test_webhook_secret_enforced_when_configured():
     finally:
         auth_mod.WEBHOOK_SECRET = original
 
+
+def test_delete_document():
+    _wh('d-del', 'todelete.pdf')
+    h = _auth()
+    r = client.delete('/api/documents/d-del', headers=h)
+    assert r.status_code == 200 and r.json().get('deleted') is True
+    assert client.get('/api/documents/d-del', headers=h).status_code == 404
+    # deleting again is a 404, and unauthenticated delete is rejected
+    assert client.delete('/api/documents/d-del', headers=h).status_code == 404
+    _wh('d-del2', 'todelete2.pdf')
+    assert client.delete('/api/documents/d-del2').status_code == 401
+
+def test_websocket_auth():
+    # rejected without a token
+    connected = True
+    try:
+        with client.websocket_connect('/ws'):
+            pass
+    except Exception:
+        connected = False
+    assert not connected
+    # accepted with a valid token, answers ping with pong
+    tok = _auth()['Authorization'].split()[1]
+    with client.websocket_connect(f'/ws?token={tok}') as ws:
+        ws.send_text('ping')
+        assert ws.receive_json()['type'] == 'pong'

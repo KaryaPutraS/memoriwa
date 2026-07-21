@@ -240,8 +240,8 @@ async def run_analysis(user: str=Depends(auth.get_current_user)):
         await ws_manager.broadcast({"type": "document.updated", "data": doc})
     async def _a():
         for doc in result["items"]:
-            updated = await analysis.analyze_document(doc, waha, repo)
-            await ws_manager.broadcast({"type": "document.updated", "data": updated})
+            await analysis.analyze_document(doc, waha, repo,
+                on_update=lambda d: ws_manager.broadcast({"type": "document.updated", "data": d}))
     asyncio.create_task(_a())
     return {"queued": len(result["items"])}
 
@@ -253,8 +253,8 @@ async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
     doc["status"] = "processing"; await repo.update_document(doc_id, doc)
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
     async def _d():
-        updated = await analysis.analyze_document(doc, waha, repo)
-        await ws_manager.broadcast({"type": "document.updated", "data": updated})
+        await analysis.analyze_document(doc, waha, repo,
+            on_update=lambda d: ws_manager.broadcast({"type": "document.updated", "data": d}))
     asyncio.create_task(_d())
     return {"queued": 1}
 

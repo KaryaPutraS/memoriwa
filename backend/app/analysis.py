@@ -36,7 +36,7 @@ OCR_PROMPT = (
 
 IDENTITY_PROMPT = """You are given the text content of a document. Produce a JSON object with exactly these keys:
 - "title": short descriptive title (max 80 chars)
-- "doc_type": one of invoice, receipt, contract, letter, report, id_card, form, image, other
+- "doc_type": specific document type, 1-3 lowercase words in the document's own language (e.g. invoice, kwitansi, surat perjanjian, tiket perjalanan, kartu identitas). Avoid generic words like "document" or "other"; use "other" only as a last resort
 - "date": main document date as YYYY-MM-DD, or "" if unknown
 - "parties": list of up to 5 people/organizations mentioned
 - "summary": 1-2 sentence summary in the document's own language
@@ -224,21 +224,36 @@ async def build_identity(text: str, cfg: dict) -> dict:
 
 # ---------- Orchestration ----------
 
-async def analyze_document(doc: dict, waha, repo) -> dict:
-    """Run the full pipeline on one document; persists status + metadata."""
+async def analyze_document(doc: dict, waha, repo, on_update=None) -> dict:
+    """Run the full pipeline on one document; persists status + metadata.
+
+    on_update (optional async callback) is invoked after every stage so
+    callers can push live progress (metadata.progress, 0-100) to clients.
+    """
     doc_id = doc["id"]
     meta = dict(doc.get("metadata") or {})
+
+    async def _progress(pct: int) -> None:
+        meta["progress"] = pct
+        doc["metadata"] = meta
+        await repo.update_document(doc_id, doc)
+        if on_update:
+            await on_update(doc)
+
     try:
         cfg = await _llm_config(repo)
         ocr_cfg = (await _vision_config(repo)) or cfg
+        await _progress(10)
         data = await fetch_doc_bytes(doc, waha)
         if not data:
             raise RuntimeError("file bytes unavailable")
+        await _progress(35)
         text, method = await extract_text(data, doc.get("mime_type", ""), ocr_cfg)
         meta["extraction_method"] = method
         meta["extracted_text"] = text[:MAX_STORED_TEXT]
         if not text.strip():
             raise RuntimeError(f"no text extracted (method={method})")
+        await _progress(65)
         if cfg:
             try:
                 meta["identity"] = await build_identity(text, cfg)
@@ -246,10 +261,14 @@ async def analyze_document(doc: dict, waha, repo) -> dict:
                 logger.warning("Identity build failed for %s: %s", doc_id, e)
                 meta["identity_error"] = str(e)[:200]
         doc["status"] = "analyzed"
+        await _progress(100)
+        return doc
     except Exception as e:
         logger.warning("Analysis failed for %s: %s", doc_id, e)
         meta["analysis_error"] = str(e)[:300]
         doc["status"] = "failed"
     doc["metadata"] = meta
     await repo.update_document(doc_id, doc)
+    if on_update:
+        await on_update(doc)
     return doc

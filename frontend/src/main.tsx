@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument } from './api';
+import { login, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -54,6 +54,26 @@ function App() {
 
   const refreshDocs = ()=>getDocuments().then(d=>setDocs(d.items||[]));
   const analyze = async (id:string)=>{ flash('Analyzing...'); await analyzeDocument(id).catch(()=>{}); refreshDocs(); flash('Done!'); };
+  const deleteDoc = async (id:string)=>{ await deleteDocument(id).catch(()=>{}); setDocs(ds=>ds.filter(d=>d.id!==id)); flash('Deleted'); };
+
+  // Live updates: new WhatsApp files, analysis progress, WA connection state
+  useEffect(()=>{
+    if(!token)return;
+    let ws:WebSocket|null=null, closed=false, retry:ReturnType<typeof setTimeout>|null=null;
+    const connect=()=>{
+      const proto=location.protocol==='https:'?'wss':'ws';
+      ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+      ws.onmessage=(ev)=>{try{
+        const m=JSON.parse(ev.data);
+        if(m.type==='document.created')setDocs(ds=>[m.data,...ds.filter(d=>d.id!==m.data.id)]);
+        if(m.type==='document.updated')setDocs(ds=>ds.map(d=>d.id===m.data.id?{...d,...m.data}:d));
+        if(m.type==='waha.status')setWahaOk(m.status==='WORKING');
+      }catch{}};
+      ws.onclose=()=>{if(!closed)retry=setTimeout(connect,3000)};
+    };
+    connect();
+    return ()=>{closed=true;if(retry)clearTimeout(retry);ws?.close()};
+  },[token]);
 
   if(!token) return <LoginScreen onLogin={t=>{setToken(t);setTok(t)}}/>;
 
@@ -76,7 +96,7 @@ function App() {
       </aside>
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
-        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze}/>}
+        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc}/>}
         {page==='Files' && <FilesPage docs={docs} analyze={analyze}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
@@ -101,10 +121,11 @@ function LoginScreen({onLogin}:{onLogin:(t:string)=>void}) {
   </div></div>;
 }
 
-function InboxPage({docs,refreshDocs,analyze}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void}) {
+function InboxPage({docs,refreshDocs,analyze,del}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void}) {
   const [q,sq]=useState(''),[f,sf]=useState('All'),[sel,ssel]=useState<string[]>([]);
   const fd=React.useMemo(()=>{
-    let d=docs;
+    // Inbox is the work queue: analyzed files live under Files instead.
+    let d=docs.filter(x=>x.status!=='analyzed');
     if(f==='PDF')d=d.filter(x=>x.mime_type==='application/pdf');
     if(f==='IMAGE')d=d.filter(x=>x.mime_type?.startsWith('image/'));
     if(q){const ql=q.toLowerCase();d=d.filter(x=>x.filename?.toLowerCase().includes(ql)||x.sender?.includes(q)||(JSON.stringify(x.metadata?.identity||'')+' '+(x.metadata?.extracted_text||'')).toLowerCase().includes(ql));}
@@ -127,14 +148,14 @@ function InboxPage({docs,refreshDocs,analyze}:{docs:Doc[];refreshDocs:()=>void;a
     <div className="cd">
       <div className="cd-hd"><b>Documents ({fd.length})</b></div>
       {fd.length===0?<div className="em"><FileText size={32}/><b>No documents</b><p>Send a file or image to your WhatsApp.</p></div>
-      :fd.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)}/>)}
+      :fd.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)}/>)}
     </div>
   </div>;
 }
 
 function M({n,l,c}:{n:number;l:string;c:string}) { return <div className="mt"><span className="mt-n" style={{color:c}}>{n}</span><span className="mt-l">{l}</span></div>; }
 
-function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void}) {
+function DocRow({doc,sel,toggle,analyze,del}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void}) {
   const [o,so]=useState(false);
   const im=doc.mime_type?.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif)$/i.test(doc.filename||'');
   const pd=doc.mime_type==='application/pdf';
@@ -145,8 +166,9 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
       <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
       <div className="di">{im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
       <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div></div>
-      <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}</span>
+      <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}{doc.status==='processing'&&typeof doc.metadata?.progress==='number'?` ${doc.metadata.progress}%`:''}</span>
       <button className="bi" onClick={e=>{e.stopPropagation();analyze()}}><Sparkles size={13}/></button>
+      {del&&<button className="bi" onClick={e=>{e.stopPropagation();del()}}><Trash2 size={13}/></button>}
       <ChevronRight size={15} className={`dc ${o?'rt':''}`}/>
     </div>
     {o&&<div className="dp"><div className="dg"><div className="dp-info"><b>{doc.filename}</b>
@@ -161,7 +183,16 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
 
 function FilesPage({docs,analyze}:{docs:Doc[];analyze:(id:string)=>void}) {
   const [q,sq]=useState(''),[folder,setFolder]=useState('');
-  const folderOf=(d:Doc)=>d.metadata?.identity?.doc_type||'Uncategorized';
+  // Folder name comes from the analysis result: a specific doc_type wins;
+  // generic/empty types fall back to the first AI tag before 'Uncategorized'.
+  const GENERIC=['','other','unknown','uncategorized','document','dokumen','file','general','lainnya','misc'];
+  const folderOf=(d:Doc)=>{
+    const t=(d.metadata?.identity?.doc_type||'').trim();
+    if(t&&!GENERIC.includes(t.toLowerCase()))return t;
+    const tag=(d.metadata?.identity?.tags||[])[0];
+    if(tag)return String(tag);
+    return 'Uncategorized';
+  };
   const ql=q.trim().toLowerCase();
   const match=(d:Doc)=>!ql||(d.filename||'').toLowerCase().includes(ql)||(JSON.stringify(d.metadata?.identity||'')+' '+(d.metadata?.extracted_text||'')).toLowerCase().includes(ql);
   const analyzed=docs.filter(d=>d.status==='analyzed');

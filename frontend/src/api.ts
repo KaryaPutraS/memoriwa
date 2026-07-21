@@ -24,6 +24,7 @@ export function logout() { localStorage.removeItem('memoriwa_token'); }
 
 export async function getDocuments() { return request('/api/documents?limit=50'); }
 export async function analyzeDocument(id: string) { return request(`/api/analysis/run/${id}`, { method: 'POST' }); }
+export async function deleteDocument(id: string) { return request(`/api/documents/${id}`, { method: 'DELETE' }); }
 
 export async function getSettings() { return request('/api/settings'); }
 export async function saveSettings(data: any) { return request('/api/settings', { method: 'PUT', body: JSON.stringify(data) }); }
