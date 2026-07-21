@@ -100,7 +100,7 @@ function InboxPage({docs,refreshDocs,analyze}:{docs:Doc[];refreshDocs:()=>void;a
     let d=docs;
     if(f==='PDF')d=d.filter(x=>x.mime_type==='application/pdf');
     if(f==='IMAGE')d=d.filter(x=>x.mime_type?.startsWith('image/'));
-    if(q)d=d.filter(x=>x.filename?.toLowerCase().includes(q.toLowerCase())||x.sender?.includes(q));
+    if(q){const ql=q.toLowerCase();d=d.filter(x=>x.filename?.toLowerCase().includes(ql)||x.sender?.includes(q)||(JSON.stringify(x.metadata?.identity||'')+' '+(x.metadata?.extracted_text||'')).toLowerCase().includes(ql));}
     return d;
   },[docs,q,f]);
   const toggle=(id:string)=>ssel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
@@ -137,13 +137,14 @@ function DocRow({doc,sel,toggle,analyze}:{doc:Doc;sel:string[];toggle:(id:string
     <div className="dr" onClick={()=>so(!o)}>
       <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
       <div className="di">{im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
-      <div className="dn"><div className="dnm">{doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}</div></div>
+      <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div></div>
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}</span>
       <button className="bi" onClick={e=>{e.stopPropagation();analyze()}}><Sparkles size={13}/></button>
       <ChevronRight size={15} className={`dc ${o?'rt':''}`}/>
     </div>
     {o&&<div className="dp"><div className="dg"><div className="dp-info"><b>{doc.filename}</b>
       <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
+      {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
       {im&&pv&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
       {pd&&<div className="pm pf"><FileIcon size={32}/><b>PDF</b><span>Document</span></div>}
       {!im&&!pd&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>

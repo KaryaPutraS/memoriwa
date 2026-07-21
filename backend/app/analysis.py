@@ -1,0 +1,227 @@
+"""Document analysis pipeline — all-free strategy.
+
+1. Digital PDFs  -> text-layer extraction with PyMuPDF (local, private).
+2. Images/scans  -> Groq vision model (llama-4-scout, free tier).
+3. Offline fallback -> Tesseract OCR (CPU, no API key needed).
+
+After extraction a text-only LLM call builds a searchable "identity"
+(title, type, date, parties, summary, tags, language) which is stored in
+the document metadata so the existing ?q= search can find files by content.
+"""
+from __future__ import annotations
+import base64, json, logging, os, subprocess
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+
+import app.auth as auth
+
+logger = logging.getLogger("memoriwa.analysis")
+
+GROQ_BASE = "https://api.groq.com/openai/v1"
+GROQ_OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+
+MAX_PDF_PAGES = 3          # pages sent to the vision model per document
+MIN_TEXT_LAYER = 50        # chars — below this a PDF is treated as scanned
+MAX_STORED_TEXT = 20000    # chars of extracted text kept in metadata
+
+ALLOWED_FETCH_HOSTS = {"localhost:3000", "127.0.0.1:3000", "waha:3000"}
+
+OCR_PROMPT = (
+    "Transcribe this document page into clean plain text (use Markdown tables "
+    "where helpful). Keep the original language. Output ONLY the transcription."
+)
+
+IDENTITY_PROMPT = """You are given the text content of a document. Produce a JSON object with exactly these keys:
+- "title": short descriptive title (max 80 chars)
+- "doc_type": one of invoice, receipt, contract, letter, report, id_card, form, image, other
+- "date": main document date as YYYY-MM-DD, or "" if unknown
+- "parties": list of up to 5 people/organizations mentioned
+- "summary": 1-2 sentence summary in the document's own language
+- "tags": list of 3-8 lowercase search keywords (names, doc type, key terms)
+- "language": ISO 639-1 code
+Respond with ONLY the JSON object, no markdown fences, no commentary.
+
+DOCUMENT TEXT:
+"""
+
+
+# ---------- LLM configuration ----------
+
+async def _llm_config(repo) -> dict | None:
+    """Resolve which OpenAI-compatible endpoint to use.
+
+    Priority: active provider configured in the dashboard -> GROQ_API_KEY env.
+    """
+    for p in await repo.get_providers():
+        if p.get("active") and p.get("api_key"):
+            key = auth.decrypt_api_key(p["api_key"])
+            if key:
+                kind = p.get("kind", "custom")
+                return {
+                    "base_url": (p.get("base_url") or GROQ_BASE).rstrip("/"),
+                    "api_key": key,
+                    "ocr_model": GROQ_OCR_MODEL if kind == "groq" else (p.get("model") or GROQ_OCR_MODEL),
+                    "text_model": GROQ_TEXT_MODEL if kind == "groq" else (p.get("model") or GROQ_TEXT_MODEL),
+                }
+    env_key = os.getenv("GROQ_API_KEY", "")
+    if env_key:
+        return {"base_url": GROQ_BASE, "api_key": env_key,
+                "ocr_model": GROQ_OCR_MODEL, "text_model": GROQ_TEXT_MODEL}
+    return None
+
+
+async def _chat(cfg: dict, model: str, messages: list, max_tokens: int = 2048) -> str:
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}"},
+            json={"model": model, "messages": messages, "temperature": 0.1, "max_tokens": max_tokens},
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+# ---------- File fetching (same SSRF rules as the download proxy) ----------
+
+async def fetch_doc_bytes(doc: dict, waha) -> bytes:
+    file_url = doc.get("file_url") or doc.get("url") or ""
+    if not file_url or waha is None:
+        return b""
+    parsed = urlparse(file_url.replace("http://localhost:3000", "http://waha:3000"))
+    if parsed.scheme != "http" or parsed.netloc not in ALLOWED_FETCH_HOSTS:
+        logger.warning("Blocked non-WAHA fetch for doc %s", doc.get("id"))
+        return b""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(parsed.geturl(), headers=waha._headers(), follow_redirects=False)
+            if r.status_code == 200 and len(r.content) > 100:
+                return r.content
+    except Exception as e:
+        logger.warning("Fetch failed for doc %s: %s", doc.get("id"), e)
+    return b""
+
+
+# ---------- Text extraction ----------
+
+def pdf_text_layer(data: bytes) -> str:
+    import fitz  # PyMuPDF
+    parts: list[str] = []
+    with fitz.open(stream=data, filetype="pdf") as pdf:
+        for page in pdf:
+            parts.append(page.get_text())
+    return "\n".join(parts).strip()
+
+
+def pdf_page_images(data: bytes, max_pages: int = MAX_PDF_PAGES) -> list[bytes]:
+    import fitz
+    images: list[bytes] = []
+    with fitz.open(stream=data, filetype="pdf") as pdf:
+        for page in pdf[:max_pages]:
+            pix = page.get_pixmap(dpi=150)
+            images.append(pix.tobytes("png"))
+    return images
+
+
+def _tesseract(image_bytes: bytes) -> str:
+    try:
+        p = subprocess.run(
+            ["tesseract", "stdin", "stdout", "-l", "ind+eng"],
+            input=image_bytes, capture_output=True, timeout=90,
+        )
+        return p.stdout.decode("utf-8", "ignore").strip()
+    except Exception as e:
+        logger.warning("Tesseract failed: %s", e)
+        return ""
+
+
+async def _ocr_image_groq(image_bytes: bytes, mime: str, cfg: dict) -> str:
+    b64 = base64.b64encode(image_bytes).decode()
+    return await _chat(cfg, cfg["ocr_model"], [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": OCR_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ],
+    }], max_tokens=4096)
+
+
+async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, str]:
+    """Returns (text, method). Never raises on OCR failure — returns what it got."""
+    if mime == "application/pdf":
+        text = pdf_text_layer(data)
+        if len(text) >= MIN_TEXT_LAYER:
+            return text, "pdf-text"
+        pages = pdf_page_images(data)
+        if cfg:
+            try:
+                parts = [await _ocr_image_groq(p, "image/png", cfg) for p in pages]
+                text = "\n\n".join(t for t in parts if t and t.strip())
+                if text.strip():
+                    return text, "groq-vision"
+            except Exception as e:
+                logger.warning("Groq vision OCR failed, falling back to tesseract: %s", e)
+        return "\n\n".join(_tesseract(p) for p in pages), "tesseract"
+    if mime.startswith("image/"):
+        if cfg:
+            try:
+                text = await _ocr_image_groq(data, mime, cfg)
+                if text.strip():
+                    return text, "groq-vision"
+            except Exception as e:
+                logger.warning("Groq vision OCR failed, falling back to tesseract: %s", e)
+        return _tesseract(data), "tesseract"
+    return "", "unsupported"
+
+
+# ---------- Identity building ----------
+
+def parse_identity(raw: str) -> dict:
+    """Tolerant JSON extraction from LLM output (handles prose/fences)."""
+    i, j = raw.find("{"), raw.rfind("}")
+    if i == -1 or j <= i:
+        raise ValueError("no JSON object in model output")
+    obj = json.loads(raw[i:j + 1])
+    keys = ("title", "doc_type", "date", "parties", "summary", "tags", "language")
+    return {k: obj[k] for k in keys if obj.get(k) not in (None, "", [])}
+
+
+async def build_identity(text: str, cfg: dict) -> dict:
+    raw = await _chat(cfg, cfg["text_model"], [
+        {"role": "user", "content": IDENTITY_PROMPT + text[:12000]},
+    ], max_tokens=1024)
+    return parse_identity(raw)
+
+
+# ---------- Orchestration ----------
+
+async def analyze_document(doc: dict, waha, repo) -> dict:
+    """Run the full pipeline on one document; persists status + metadata."""
+    doc_id = doc["id"]
+    meta = dict(doc.get("metadata") or {})
+    try:
+        cfg = await _llm_config(repo)
+        data = await fetch_doc_bytes(doc, waha)
+        if not data:
+            raise RuntimeError("file bytes unavailable")
+        text, method = await extract_text(data, doc.get("mime_type", ""), cfg)
+        meta["extraction_method"] = method
+        meta["extracted_text"] = text[:MAX_STORED_TEXT]
+        if not text.strip():
+            raise RuntimeError(f"no text extracted (method={method})")
+        if cfg:
+            try:
+                meta["identity"] = await build_identity(text, cfg)
+            except Exception as e:
+                logger.warning("Identity build failed for %s: %s", doc_id, e)
+                meta["identity_error"] = str(e)[:200]
+        doc["status"] = "analyzed"
+    except Exception as e:
+        logger.warning("Analysis failed for %s: %s", doc_id, e)
+        meta["analysis_error"] = str(e)[:300]
+        doc["status"] = "failed"
+    doc["metadata"] = meta
+    await repo.update_document(doc_id, doc)
+    return doc

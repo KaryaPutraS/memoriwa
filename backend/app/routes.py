@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel
 import app.auth as auth
+import app.analysis as analysis
 from app.repository import Repository, get_repository
 from app.waha_client import WAHAClient
 
@@ -226,11 +227,8 @@ async def run_analysis(user: str=Depends(auth.get_current_user)):
         await ws_manager.broadcast({"type": "document.updated", "data": doc})
     async def _a():
         for doc in result["items"]:
-            await asyncio.sleep(0)
-            doc["status"] = "analyzed"
-            doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "stub", "note": "No AI provider configured"}}
-            await repo.update_document(doc["id"], doc)
-            await ws_manager.broadcast({"type": "document.updated", "data": doc})
+            updated = await analysis.analyze_document(doc, waha, repo)
+            await ws_manager.broadcast({"type": "document.updated", "data": updated})
     asyncio.create_task(_a())
     return {"queued": len(result["items"])}
 
@@ -242,10 +240,8 @@ async def analyze_single(doc_id: str, user: str=Depends(auth.get_current_user)):
     doc["status"] = "processing"; await repo.update_document(doc_id, doc)
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
     async def _d():
-        doc["status"] = "analyzed"
-        doc["metadata"] = {**(doc.get("metadata") or {}), "analysis": {"provider": "stub"}}
-        await repo.update_document(doc_id, doc)
-        await ws_manager.broadcast({"type": "document.updated", "data": doc})
+        updated = await analysis.analyze_document(doc, waha, repo)
+        await ws_manager.broadcast({"type": "document.updated", "data": updated})
     asyncio.create_task(_d())
     return {"queued": 1}
 

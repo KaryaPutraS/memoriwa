@@ -91,6 +91,28 @@ def test_analysis():
     r = client.post('/api/analysis/run', headers=_auth())
     assert r.status_code == 200
 
+def test_analysis_pipeline_helpers():
+    """Unit tests for the free OCR/identity pipeline (no network needed)."""
+    import asyncio
+    from app import analysis
+
+    # parse_identity tolerates prose + markdown fences around the JSON
+    raw = 'Sure! Here is the result:\n```json\n{"title":"Invoice PLN Maret","doc_type":"invoice","tags":["pln","invoice"],"extra":"dropped"}\n```'
+    ident = analysis.parse_identity(raw)
+    assert ident['title'] == 'Invoice PLN Maret'
+    assert ident['doc_type'] == 'invoice'
+    assert 'extra' not in ident
+
+    # digital PDF -> text layer extraction without any OCR model
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), 'INVOICE PT Contoh Sejahtera Nomor 001 tanggal 2026-07-01 total Rp 1.500.000')
+    pdf_bytes = doc.tobytes()
+    text, method = asyncio.run(analysis.extract_text(pdf_bytes, 'application/pdf', None))
+    assert method == 'pdf-text'
+    assert 'INVOICE' in text
+
 def test_file_download_requires_auth():
     """File proxy must require a Bearer token — no token-in-URL support."""
     _wh('d7', 'gambar.jpg', 'image/jpeg')
