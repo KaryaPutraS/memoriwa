@@ -67,6 +67,17 @@ def test_settings():
     r = client.put('/api/settings', headers=_auth(), json={'theme': 'dark', 'language': 'en', 'auto_analyze': False})
     assert r.status_code == 200
 
+def test_settings_branding_roundtrip():
+    """Logo/favicon data URLs saved via settings must come back on GET."""
+    h = _auth()
+    r = client.put('/api/settings', headers=h, json={
+        'theme': 'dark', 'language': 'id', 'auto_analyze': False,
+        'logo_data': 'data:image/png;base64,AA==', 'favicon_data': 'data:image/png;base64,BB=='})
+    assert r.status_code == 200
+    g = client.get('/api/settings', headers=h).json()
+    assert g.get('logo_data') == 'data:image/png;base64,AA=='
+    assert g.get('favicon_data') == 'data:image/png;base64,BB=='
+
 def test_vision_settings_key_never_exposed():
     """Vision OCR config: key is write-only, model/base_url round-trip."""
     import asyncio

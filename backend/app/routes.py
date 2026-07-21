@@ -25,6 +25,9 @@ class SettingsRequest(BaseModel):
     # Dedicated vision/OCR endpoint (OpenAI-compatible). vision_api_key is
     # write-only: never returned by GET /api/settings.
     vision_base_url: str = ""; vision_model: str = ""; vision_api_key: str = ""
+    # Branding: data URLs (e.g. "data:image/png;base64,...") for the
+    # dashboard logo and favicon, set from Settings -> General.
+    logo_data: str = ""; favicon_data: str = ""
 
 PROVIDER_PRESETS = [
     {"key":"openai","name":"OpenAI","base_url":"https://api.openai.com/v1","models":["gpt-5.5","gpt-5.4"]},

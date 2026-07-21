@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument } from './api';
+import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -55,6 +55,15 @@ function App() {
   const refreshDocs = ()=>getDocuments().then(d=>setDocs(d.items||[]));
   const analyze = async (id:string)=>{ flash('Analyzing...'); await analyzeDocument(id).catch(()=>{}); refreshDocs(); flash('Done!'); };
   const deleteDoc = async (id:string)=>{ await deleteDocument(id).catch(()=>{}); setDocs(ds=>ds.filter(d=>d.id!==id)); flash('Deleted'); };
+  const doLogout = ()=>{ logout(); setTok(''); };
+
+  // Branding: apply custom favicon saved in Settings
+  useEffect(()=>{
+    if(!settings?.favicon_data)return;
+    let l=document.querySelector("link[rel~='icon']") as HTMLLinkElement|null;
+    if(!l){l=document.createElement('link');l.rel='icon';document.head.appendChild(l)}
+    l.href=settings.favicon_data;
+  },[settings?.favicon_data]);
 
   // Live updates: new WhatsApp files, analysis progress, WA connection state
   useEffect(()=>{
@@ -88,11 +97,11 @@ function App() {
     <div className={`shell ${sidebar?'open':''}`}>
       {sidebar&&<div className="overlay" onClick={()=>setSidebar(false)}/>}
       <aside className="sidebar">
-        <div className="sb-br"><div className="sb-lo"><Zap size={20}/></div><span>MemoriWA</span></div>
+        <div className="sb-br">{settings?.logo_data?<img src={settings.logo_data} alt="logo" style={{width:36,height:36,borderRadius:10,objectFit:'cover'}}/>:<div className="sb-lo"><Zap size={20}/></div>}<span>MemoriWA</span></div>
         <nav className="sb-nav">
           {nav.map(n=><button key={n.id} className={`sb-it ${page===n.id?'on':''}`} onClick={()=>{window.location.hash=n.id;setPage(n.id);setSidebar(false)}}><n.icon size={18}/><span>{n.label}</span></button>)}
         </nav>
-        <div className="sb-ft"><div className={`dot ${wahaOk?'on':'off'}`}/><span>{wahaOk?'Connected':'Offline'}</span></div>
+        <div className="sb-ft"><div className={`dot ${wahaOk?'on':'off'}`}/><span>{wahaOk?'Connected':'Offline'}</span><button className="bi" style={{marginLeft:'auto',color:'#a0a0b8'}} title="Logout" onClick={doLogout}><LogOut size={15}/></button></div>
       </aside>
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
@@ -231,10 +240,22 @@ function StatsPage({docs}:{docs:Doc[]}) {
 function SettingsPage({settings,provs,onSave,onAdd,onDel,onToggle}:any) {
   const [tab,setTab]=useState('connect');
   const [loc,setLoc]=useState(settings||{});
+  const readImg=(f:File,cb:(d:string)=>void)=>{
+    if(f.size>300*1024){alert('Image too large (max 300 KB)');return}
+    const r=new FileReader();r.onload=()=>cb(String(r.result));r.readAsDataURL(f);
+  };
   return <div className="pg"><div className="tbs">
     {[{id:'connect',l:'Connection'},{id:'general',l:'General'},{id:'ai',l:'AI'}].map(t=><button key={t.id} className={`tb-btn ${tab===t.id?'on':''}`} onClick={()=>setTab(t.id)}>{t.l}</button>)}</div>
     {tab==='connect'&&<ConnectTab/>}
-    {tab==='general'&&<div className="cd"><div className="cd-hd"><b>General</b></div><div className="p4 s3"><FL label="Webhook Secret" val={loc.webhook_secret||''} onChange={(v:string)=>setLoc({...loc,webhook_secret:v})}/><FL label="Retention (days)" val={loc.retention_days||'90'} onChange={(v:string)=>setLoc({...loc,retention_days:v})}/><button className="btn pr" onClick={()=>onSave(loc)}>Save</button></div></div>}
+    {tab==='general'&&<>
+      <div className="cd"><div className="cd-hd"><b>General</b></div><div className="p4 s3"><FL label="Webhook Secret" val={loc.webhook_secret||''} onChange={(v:string)=>setLoc({...loc,webhook_secret:v})}/><FL label="Retention (days)" val={loc.retention_days||'90'} onChange={(v:string)=>setLoc({...loc,retention_days:v})}/><button className="btn pr" onClick={()=>onSave(loc)}>Save</button></div></div>
+      <div className="cd"><div className="cd-hd"><b>Branding</b></div><div className="p4 s3">
+        <div className="fi"><label>Logo</label>{loc.logo_data&&<img src={loc.logo_data} alt="logo" style={{width:36,height:36,borderRadius:8,marginBottom:6}}/>}<input className="inp" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)readImg(f,(d:string)=>setLoc((p:any)=>({...p,logo_data:d})))}}/></div>
+        <div className="fi"><label>Favicon</label>{loc.favicon_data&&<img src={loc.favicon_data} alt="favicon" style={{width:20,height:20,marginBottom:6}}/>}<input className="inp" type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)readImg(f,(d:string)=>setLoc((p:any)=>({...p,favicon_data:d})))}}/></div>
+        <p className="xs mu">PNG/JPG up to 300 KB. Saved to the server, applied for all browsers.</p>
+        <button className="btn pr" onClick={()=>onSave(loc)}>Save</button>
+      </div></div>
+    </>}
     {tab==='ai'&&<><VisionCard settings={settings} onSave={onSave}/><AITab pv={provs} onAdd={onAdd} onDel={onDel} onToggle={onToggle}/></>}
   </div>;
 }
