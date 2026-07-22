@@ -110,3 +110,63 @@ def test_non_message_events_ignored():
     assert r.json().get('accepted') is False
     r = client.post('/webhook/waha', json={'event': 'message.ack', 'payload': {'id': 'ack1', 'body': 'x'}})
     assert r.json().get('accepted') is False
+
+
+def _insert_old_photo(doc_id: str, sender: str, minutes_ago: float):
+    """Insert an ungrouped photo straight into the store with a past timestamp."""
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+    from app.repository import get_repository
+    repo = asyncio.run(get_repository())
+    asyncio.run(repo.add_document({
+        'id': doc_id, 'filename': f'{doc_id}.jpg', 'mime_type': 'image/jpeg',
+        'sender': sender, 'status': 'unanalyzed',
+        'created_at': (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat(),
+        'metadata': {}}))
+
+
+def test_text_only_groups_latest_burst():
+    """The user's exact case: two DIFFERENT activities inside 10 minutes.
+    Photos of activity A (6 min ago), then photos of activity B (now),
+    then ONE text -> only activity B is grouped; A stays untouched."""
+    h = _auth()
+    _insert_old_photo('oldA1', '628333', 6.0)
+    _insert_old_photo('oldA2', '628333', 5.5)
+    _nested_photo('newB1', sender='628333@c.us')
+    _nested_photo('newB2', sender='628333@c.us')
+    r = client.post('/webhook/waha', json={
+        'event': 'message', 'session': 'default',
+        'payload': {'id': 'mix-text', 'from': '628333@c.us', 'body': 'Dokumentasi kegiatan B'}})
+    j = r.json()
+    assert j.get('accepted') is True and j.get('images') == 2, j
+    # activity B grouped with the text
+    d_new = client.get('/api/documents/newB1', headers=h).json()
+    assert d_new['metadata']['explanation'] == 'Dokumentasi kegiatan B'
+    assert client.get('/api/documents/newB2', headers=h).json()['metadata']['group_id'] == d_new['metadata']['group_id']
+    # activity A untouched — still waiting in the Inbox, ungrouped
+    d_old = client.get('/api/documents/oldA1', headers=h).json()
+    assert 'group_id' not in d_old['metadata']
+    assert 'explanation' not in d_old['metadata']
+
+
+def test_back_to_back_activities_each_get_their_text():
+    """Photos A -> text A -> photos B -> text B: two separate groups,
+    each with its own explanation."""
+    h = _auth()
+    _nested_photo('actA1', sender='628444@c.us')
+    _nested_photo('actA2', sender='628444@c.us')
+    r1 = client.post('/webhook/waha', json={
+        'event': 'message', 'session': 'default',
+        'payload': {'id': 'textA', 'from': '628444@c.us', 'body': 'Kegiatan A — apel pagi'}})
+    assert r1.json().get('images') == 2
+    _nested_photo('actB1', sender='628444@c.us')
+    r2 = client.post('/webhook/waha', json={
+        'event': 'message', 'session': 'default',
+        'payload': {'id': 'textB', 'from': '628444@c.us', 'body': 'Kegiatan B — rapat koordinasi'}})
+    j2 = r2.json()
+    assert j2.get('accepted') is True and j2.get('images') == 1, j2
+    dA = client.get('/api/documents/actA1', headers=h).json()
+    dB = client.get('/api/documents/actB1', headers=h).json()
+    assert dA['metadata']['explanation'] == 'Kegiatan A — apel pagi'
+    assert dB['metadata']['explanation'] == 'Kegiatan B — rapat koordinasi'
+    assert dA['metadata']['group_id'] != dB['metadata']['group_id']

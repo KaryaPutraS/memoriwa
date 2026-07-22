@@ -263,14 +263,19 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     return {"accepted": True, "document_id": did, "event_id": eid}
 
 # Documents
-CAPTION_WINDOW_MINUTES = 10
+CAPTION_WINDOW_MINUTES = 10  # hard outer lookback limit (safety net only)
+CAPTION_BURST_GAP_SECONDS = int(os.getenv("CAPTION_BURST_GAP_SEC", "120"))
 
 async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
-    """Attach a text message as explanation to the recent ungrouped images
-    from the same sender (first text after a photo burst groups them).
+    """Attach a text message as explanation to the LATEST photo burst from
+    the same sender.
 
-    Photos that nobody ever follows up with a text simply stay in the Inbox
-    as individual ungrouped documents — exactly the fallback behavior.
+    A burst = consecutive ungrouped images where each arrived within
+    CAPTION_BURST_GAP_SECONDS of the previous one. This keeps different
+    activities separate even inside the outer 10-minute window: photos A,
+    text A, photos B, text B — each text only explains its own burst, and
+    an older burst is never swallowed by a newer explanation. Photos with
+    no follow-up text simply stay ungrouped in the Inbox (the fallback).
     """
     sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "") if isinstance(msg, dict) else ""
     if "@" in sender:
@@ -279,7 +284,7 @@ async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
         return []
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=CAPTION_WINDOW_MINUTES)
     result = await repo.get_documents(limit=100)
-    cands: list[dict] = []
+    cands: list[tuple[datetime, dict]] = []
     for d in result["items"]:
         if d.get("sender") != sender:
             continue
@@ -298,14 +303,29 @@ async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
             ts = ts.replace(tzinfo=timezone.utc)
         if ts < cutoff:
             continue
-        cands.append(d)
-    for d in cands:
+        cands.append((ts, d))
+    if not cands:
+        return []
+    cands.sort(key=lambda x: x[0])
+    # Keep only the newest contiguous burst: walk backwards from the latest
+    # photo while the gap between consecutive photos is small enough to be
+    # one activity. A larger gap marks an older, separate burst.
+    burst: list[tuple[datetime, dict]] = [cands[-1]]
+    for prev in reversed(cands[:-1]):
+        gap = (burst[0][0] - prev[0]).total_seconds()
+        if gap <= CAPTION_BURST_GAP_SECONDS:
+            burst.insert(0, prev)
+        else:
+            break
+    out: list[dict] = []
+    for _, d in burst:
         meta = dict(d.get("metadata") or {})
         meta["explanation"] = body
         meta["group_id"] = eid
         d["metadata"] = meta
         await repo.update_document(d["id"], d)
-    return cands
+        out.append(d)
+    return out
 
 class VerifyRequest(BaseModel): ids: list[str]; folder: str = ""
 class GroupUpdateRequest(BaseModel): explanation: str | None = None; folder: str | None = None
