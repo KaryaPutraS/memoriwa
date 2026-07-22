@@ -98,7 +98,9 @@ async def waha_status(user: str = Depends(auth.get_current_user)):
 @router.post("/api/waha/start")
 async def waha_start(user: str = Depends(auth.get_current_user)):
     wh = get_waha()
-    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://43.156.71.166:8082/webhook/waha")
+    # Default: WAHA reaches the webhook inside the docker network — the
+    # endpoint never has to be exposed to the internet.
+    webhook_url = os.getenv("MEMORIWA_WEBHOOK_URL", "http://api:8000/webhook/waha")
     if auth.WEBHOOK_SECRET:
         sep = "&" if "?" in webhook_url else "?"
         webhook_url = f"{webhook_url}{sep}secret={auth.WEBHOOK_SECRET}"
