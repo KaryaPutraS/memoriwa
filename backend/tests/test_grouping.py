@@ -40,7 +40,9 @@ def _nested_photo(doc_id: str, sender: str = '628777@c.us', body: str = '') -> d
     return r.json()
 
 def test_waha_nested_payload_media_accepted():
-    r = _nested_photo('np1')
+    # different sender from the burst tests below — the caption window
+    # groups by sender, so tests must not leak into each other
+    r = _nested_photo('np1', sender='628778@c.us')
     assert r.get('accepted') is True, r
 
 
