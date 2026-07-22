@@ -25,6 +25,29 @@ curl -fsSL https://raw.githubusercontent.com/KaryaPutraS/memoriwa/main/install.s
 **Update an existing install:** just run the same one-liner again — your
 `.env`, WhatsApp session and document data are preserved.
 
+### Custom port
+
+By default the dashboard is served on **port 80**, so it opens at
+`http://your-domain-or-ip` with no port in the URL. If port 80 is already
+taken by another app on your server, pick any free port at install time:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KaryaPutraS/memoriwa/main/install.sh \
+  | bash -s -- --port 8080
+```
+
+The dashboard is then available at `http://your-domain-or-ip:8080`.
+
+Notes:
+
+- **Already installed?** Re-run the installer with the new `--port` (your
+  `.env` and data are kept), or edit `WEB_PORT=` in `~/memoriwa/.env`
+  manually and run `docker compose up -d` from `~/memoriwa`.
+- Only the web port is exposed publicly. The API (8000) and WAHA (3000)
+  stay inside the docker network and are never reachable from the internet.
+- Behind Cloudflare or another reverse proxy, point it at the web port and
+  set `PUBLIC_URL` accordingly (e.g. `https://dash.example.com`).
+
 ## After installing
 
 1. Open the dashboard URL and log in.
