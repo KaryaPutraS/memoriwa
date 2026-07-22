@@ -7,6 +7,10 @@ services:
     restart: unless-stopped
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:?WAHA_API_KEY must be set}
+      # NOWEB engine: speaks the WhatsApp multi-device protocol directly —
+      # no headless Chromium, a fraction of the RAM, faster startup, and a
+      # fingerprint closer to the real app. Perfect for a single number.
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
     volumes:
       - waha_sessions:/app/.sessions
     networks: [app-net]

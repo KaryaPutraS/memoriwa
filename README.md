@@ -77,6 +77,21 @@ docker compose up -d       # start
 - API keys for AI providers stored Fernet-encrypted
 - Only the web port is exposed; `api` and `waha` stay inside the docker network
 
+## WhatsApp engine & ban-risk notes
+
+MemoriWA uses WAHA with the **NOWEB engine** — it speaks the WhatsApp
+multi-device protocol directly without a headless browser, so it uses a
+fraction of the RAM and looks closer to a real client than browser
+automation. The system is strictly **receive-only** (it never sends
+messages), which is the lowest-risk usage pattern. Still, every unofficial
+WhatsApp client violates the ToS and carries ban risk — there is no
+ban-proof unofficial tool. Practical rules:
+
+- Use a **dedicated secondary number**, never your main one
+- Do not send messages from the connected number via the API
+- Keep the session stable: avoid repeated logout/re-pairing
+- For zero risk, the only path is the official WhatsApp Business Cloud API
+
 ## Development
 
 ```bash

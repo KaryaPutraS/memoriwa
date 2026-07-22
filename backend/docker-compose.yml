@@ -23,8 +23,8 @@ services:
     environment:
       - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY must be set in .env}
       - WAHA_PRINT_QR=false
-      - WHATSAPP_DEFAULT_ENGINE=WEBJS
-      - WAHA_CHROMIUM_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu,--single-process
+      # NOWEB = protocol-level engine without headless Chromium (lighter)
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
     restart: unless-stopped
     networks:
       - app-net
