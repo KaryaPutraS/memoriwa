@@ -42,17 +42,31 @@ PROVIDER_PRESETS = [
 
 DOC_MIMES = ("application/pdf","image/","text/","application/msword","application/vnd","application/zip")
 
+def _extract_message(payload: dict) -> dict:
+    """Normalize WAHA webhook shapes: the message object may live under
+    'message', 'data', or 'payload' (the real WAHA format), or at top level.
+
+    This is the piece that makes caption grouping work in production: real
+    WAHA webhooks nest everything under payload.payload, and the old text
+    branch never looked there — so explanation texts were never seen.
+    """
+    for key in ("message", "data", "payload"):
+        m = payload.get(key)
+        if isinstance(m, dict) and any(k in m for k in ("id", "from", "author", "body", "media", "mediaData")):
+            return m
+    return payload if isinstance(payload, dict) else {}
+
 def _extract_media(payload: dict) -> dict:
     """Extract media info from various WAHA webhook formats."""
-    # Format 1: payload.message.media (most common)
-    msg = payload.get("message") or payload.get("data") or payload
+    msg = _extract_message(payload)
     if isinstance(msg, dict):
+        # Format 1: msg.media / msg.mediaData (most common)
         media = msg.get("media") or msg.get("mediaData") or {}
         if media:
             return media
         # Format 2: payload.payload.media
         inner = payload.get("payload") or {}
-        if isinstance(inner, dict):
+        if isinstance(inner, dict) and inner is not msg:
             return inner.get("media") or {}
     return {}
 
@@ -150,28 +164,31 @@ def _check_webhook_secret(secret: str | None, header_secret: str | None) -> None
 async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_secret: str | None = Header(None)):
     """Receive messages from WAHA. Accepts multiple WAHA payload formats."""
     _check_webhook_secret(secret, x_webhook_secret)
+
+    # Only process real message events — skip acks, reactions, session status.
+    event = str(payload.get("event") or "")
+    if event and event not in ("message", "message.any"):
+        return {"accepted": False, "reason": f"ignored event: {event}"}
+
     repo = await get_repository()
-    
+    msg = _extract_message(payload)
+
     # Generate event ID for idempotency
     eid = str(payload.get("id") or payload.get("eventId") or "")
-    if not eid:
-        # Try nested
-        msg = payload.get("message") or payload.get("data") or payload.get("payload") or {}
-        if isinstance(msg, dict):
-            eid = str(msg.get("id") or "")
+    if not eid and isinstance(msg, dict):
+        eid = str(msg.get("id") or "")
     if not eid:
         eid = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
-    
+
     # Idempotency check
     if not await repo.add_event(eid):
         return {"accepted": False, "duplicate": True, "event_id": eid}
-    
+
     # Extract media
     media = _extract_media(payload)
     if not media:
         # Text-only message: the first text after a burst of photos becomes
         # their explanation and groups them (activity documentation flow).
-        msg = payload.get("message") or payload.get("data") or {}
         body = msg.get("body", "") if isinstance(msg, dict) else ""
         if body:
             attached = await _attach_caption(repo, msg, body, eid)
@@ -181,26 +198,26 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
                 return {"accepted": True, "caption_group": eid, "images": len(attached), "event_id": eid}
             return {"accepted": False, "reason": "text-only message", "event_id": eid}
         return {"accepted": False, "reason": "no media found", "event_id": eid}
-    
+
     # Extract sender
-    msg = payload.get("message") or payload.get("data") or payload.get("payload") or {}
     sender = ""
     if isinstance(msg, dict):
         sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "")
         # Clean WA ID format
         if "@" in sender:
             sender = sender.split("@")[0]
-    
+
     mime = str(media.get("mimetype") or media.get("mimeType") or "application/octet-stream")
     filename = str(media.get("filename") or media.get("fileName") or "untitled")
-    
+
     # Check if document/image
     is_doc = any(mime.lower().startswith(m) for m in DOC_MIMES)
     is_img = mime.lower().startswith("image/")
     if not is_doc:
         return {"accepted": False, "reason": f"unsupported mime: {mime}", "event_id": eid}
-    
-    did = str(msg.get("id") or eid)
+
+    did = str(msg.get("id") or eid) if isinstance(msg, dict) else eid
+    caption = str(msg.get("body") or msg.get("caption") or "") if isinstance(msg, dict) else ""
     doc = {
         "id": did,
         "filename": filename,
@@ -216,15 +233,24 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
             "media_url": str(media.get("url") or ""),
             "mimetype": mime,
             "size": media.get("size") or media.get("fileSize") or 0,
-            "caption": str(msg.get("body") or msg.get("caption") or ""),
+            "caption": caption,
         },
     }
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
+
+    # A caption carried by a photo doubles as the explanation for the whole
+    # burst — group this photo with the recent ungrouped images of the same
+    # sender, exactly like a text message sent right after the photos.
+    if is_img and caption:
+        attached = await _attach_caption(repo, msg, caption, eid)
+        for d in attached:
+            await ws_manager.broadcast({"type": "document.updated", "data": d})
+
     settings = await repo.get_settings() or {}
     # Images are not auto-analyzed: activity photos wait for their caption
     # text and then human verification instead of AI analysis.
-    if settings.get("auto_analyze") and not mime.lower().startswith("image/"):
+    if settings.get("auto_analyze") and not is_img:
         # WAHA only keeps media files briefly — analyze immediately while
         # the bytes are still downloadable.
         doc["status"] = "processing"
@@ -241,8 +267,12 @@ CAPTION_WINDOW_MINUTES = 10
 
 async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
     """Attach a text message as explanation to the recent ungrouped images
-    from the same sender (first text after a photo burst groups them)."""
-    sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "")
+    from the same sender (first text after a photo burst groups them).
+
+    Photos that nobody ever follows up with a text simply stay in the Inbox
+    as individual ungrouped documents — exactly the fallback behavior.
+    """
+    sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "") if isinstance(msg, dict) else ""
     if "@" in sender:
         sender = sender.split("@")[0]
     if not sender:
@@ -437,10 +467,10 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
     repo = await get_repository()
     doc = await repo.get_document(doc_id)
     if not doc: raise HTTPException(404)
-    
+
     mime = doc.get("mime_type", "image/jpeg")
     filename = doc.get("filename", "file")
-    
+
     # Try to get the file from WAHA using the media URL from webhook
     file_url = doc.get("file_url") or doc.get("url") or ""
     wh = get_waha() if waha else None
@@ -472,7 +502,7 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
                     )
         except Exception:
             pass
-    
+
     # Fallback: return a placeholder SVG for images, or plain info for docs
     if mime.startswith("image/"):
         svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" style="background:#f0f0f0;border:2px solid #111">
@@ -482,7 +512,7 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
         </svg>'''
         from fastapi.responses import Response
         return Response(content=svg.encode(), media_type="image/svg+xml")
-    
+
     if mime == "application/pdf":
         svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150">
             <rect width="200" height="150" fill="#f2504b" stroke="#111" stroke-width="2"/>
@@ -491,7 +521,7 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
         </svg>'''
         from fastapi.responses import Response
         return Response(content=svg.encode(), media_type="image/svg+xml")
-    
+
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(f"File: {filename}\nType: {mime}\nPreview not available for this type.")
 
