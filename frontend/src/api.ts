@@ -21,6 +21,7 @@ export async function login(username: string, password: string) {
 }
 
 export function logout() { localStorage.removeItem('memoriwa_token'); }
+export async function changePassword(current_password: string, new_password: string) { return request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password, new_password }) }); }
 export async function getDocuments() { return request('/api/documents?limit=50'); }
 export async function analyzeDocument(id: string) { return request(`/api/analysis/run/${id}`, { method: 'POST' }); }
 export async function deleteDocument(id: string) { return request(`/api/documents/${id}`, { method: 'DELETE' }); }

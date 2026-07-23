@@ -65,6 +65,10 @@ def _hash_password(password: str) -> str:
     return f'pbkdf2:sha256:600000${salt.hex()}${key.hex()}'
 
 
+# Public alias for callers that mint new hashes (e.g. change-password).
+hash_password = _hash_password
+
+
 def verify_password(password: str, hashed: str) -> bool:
     try:
         parts = hashed.split('$')
