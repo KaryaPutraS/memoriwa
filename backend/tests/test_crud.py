@@ -163,3 +163,34 @@ def test_caption_fallback_strips_greetings():
     # empty / greeting-only captions stay sane
     ident2 = _caption_fallback('Assalamualaikum wr wb')
     assert ident2['title']
+
+def test_change_password():
+    h = _auth()
+    # wrong current password -> 400
+    assert client.post('/api/auth/change-password', headers=h,
+                       json={'current_password': 'salah', 'new_password': 'baru-12345'}).status_code == 400
+    # too short -> 400
+    assert client.post('/api/auth/change-password', headers=h,
+                       json={'current_password': 'admin-test-password', 'new_password': 'pendek'}).status_code == 400
+    # unchanged -> 400
+    assert client.post('/api/auth/change-password', headers=h,
+                       json={'current_password': 'admin-test-password', 'new_password': 'admin-test-password'}).status_code == 400
+    # unauthenticated -> 401
+    assert client.post('/api/auth/change-password',
+                       json={'current_password': 'admin-test-password', 'new_password': 'password-baru-1'}).status_code == 401
+    # happy path
+    r = client.post('/api/auth/change-password', headers=h,
+                    json={'current_password': 'admin-test-password', 'new_password': 'password-baru-1'})
+    assert r.status_code == 200 and r.json()['changed']
+    # the stored hash never leaks through the settings API
+    s = client.get('/api/settings', headers=h).json()
+    assert 'admin_password_hash' not in s
+    # old password rejected, new one accepted
+    assert client.post('/api/auth/login', json={'username': 'admin', 'password': 'admin-test-password'}).status_code == 401
+    r2 = client.post('/api/auth/login', json={'username': 'admin', 'password': 'password-baru-1'})
+    assert r2.status_code == 200
+    # restore the default so other tests keep working
+    h2 = {'Authorization': f'Bearer {r2.json()["access_token"]}'}
+    r3 = client.post('/api/auth/change-password', headers=h2,
+                     json={'current_password': 'password-baru-1', 'new_password': 'admin-test-password'})
+    assert r3.status_code == 200
