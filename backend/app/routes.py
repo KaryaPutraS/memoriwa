@@ -81,11 +81,37 @@ class WSManager:
 ws_manager = WSManager()
 
 # Auth
+async def _effective_password_hash(repo) -> str:
+    """A password changed via the dashboard is stored (PBKDF2 hash) in the
+    settings store and beats the env ADMIN_PASSWORD from then on."""
+    s = await repo.get_settings() or {}
+    return str(s.get("admin_password_hash") or "") or auth.ADMIN_PASSWORD_HASH
+
 @router.post("/api/auth/login")
 async def login(body: LoginRequest):
     if not hmac.compare_digest(body.username, auth.ADMIN_USERNAME): raise HTTPException(401)
-    if not auth.verify_password(body.password, auth.ADMIN_PASSWORD_HASH): raise HTTPException(401)
+    repo = await get_repository()
+    if not auth.verify_password(body.password, await _effective_password_hash(repo)): raise HTTPException(401)
     return {"access_token": auth.create_token(body.username), "token_type": "bearer"}
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.post("/api/auth/change-password")
+async def change_password(body: ChangePasswordRequest, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    if not auth.verify_password(body.current_password, await _effective_password_hash(repo)):
+        raise HTTPException(400, "Current password is wrong")
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
+    if hmac.compare_digest(body.new_password, body.current_password):
+        raise HTTPException(400, "New password must differ from the current one")
+    s = dict(await repo.get_settings() or {})
+    s["admin_password_hash"] = auth.hash_password(body.new_password)
+    await repo.save_settings(s)
+    logger.info("Admin password changed by %s", user)
+    return {"changed": True}
 
 # WAHA
 @router.get("/api/waha/status")
@@ -615,6 +641,7 @@ async def get_settings(user: str=Depends(auth.get_current_user)):
     s = dict(await (await get_repository()).get_settings() or SettingsRequest().model_dump())
     s["vision_api_key_set"] = bool(s.get("vision_api_key"))
     s.pop("vision_api_key", None)
+    s.pop("admin_password_hash", None)  # never leak the stored hash
     return s
 
 @router.put("/api/settings")
@@ -628,6 +655,7 @@ async def save_settings(body: SettingsRequest, user: str=Depends(auth.get_curren
     s = dict(s)
     s["vision_api_key_set"] = bool(s.get("vision_api_key"))
     s.pop("vision_api_key", None)
+    s.pop("admin_password_hash", None)
     return s
 
 @router.get("/api/providers")
