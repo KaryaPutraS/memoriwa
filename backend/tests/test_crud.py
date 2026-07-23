@@ -159,6 +159,7 @@ def test_caption_fallback_strips_greetings():
     assert 'piket' in ident['title'].lower()
     assert ident['doc_type'].startswith('piket')
     assert 'senkom' in ident['tags']
+    assert 'dum' not in ident['tags']  # invisible-char stopword removed
     # empty / greeting-only captions stay sane
     ident2 = _caption_fallback('Assalamualaikum wr wb')
     assert ident2['title']

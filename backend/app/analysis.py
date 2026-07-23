@@ -295,7 +295,7 @@ def _caption_fallback(caption: str) -> dict:
     core = re.sub(r"\s+", " ", core).strip(" .,")
     words = core.split(" ") if core else []
     title = " ".join(words[:8]) or (caption or "Dokumentasi")[:80]
-    sig = [w.strip(".,;:!?()").lower() for w in words]
+    sig = [re.sub(r"[\u200e\u200f]", "", w).strip(".,;:!?()").lower() for w in words]
     sig = [w for w in sig if len(w) > 2 and w not in _STOPWORDS and not w.isdigit()]
     doc_type = " ".join(sig[:2]) if sig else "dokumentasi kegiatan"
     seen: set[str] = set()
