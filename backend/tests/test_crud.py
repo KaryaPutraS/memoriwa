@@ -95,3 +95,59 @@ def test_delete_group():
     # deleting again -> 404
     assert client.delete(f'/api/documents/group/{gid}', headers=h).status_code == 404
     assert client.delete(f'/api/documents/group/{gid}').status_code == 401
+
+def test_regroup_photo_to_other_group():
+    h = _auth()
+    # two bursts from the same sender, each with its own caption -> two groups
+    _wh('g1a', 'a1.jpg', 'image/jpeg', sender='628700')
+    client.post('/webhook/waha', json={'id': 'evt-t1', 'message': {'id': 't1', 'from': '628700', 'body': 'Kegiatan apel pagi'}})
+    import time; time.sleep(0.1)
+    _wh('g2a', 'b1.jpg', 'image/jpeg', sender='628700')
+    _wh('g2b', 'b2.jpg', 'image/jpeg', sender='628700')
+    client.post('/webhook/waha', json={'id': 'evt-t2', 'message': {'id': 't2', 'from': '628700', 'body': 'Piket senkom malam'}})
+    g1 = client.get('/api/documents/g1a', headers=h).json()['metadata']['group_id']
+    g2 = client.get('/api/documents/g2a', headers=h).json()['metadata']['group_id']
+    assert g1 != g2
+    # move the wrongly-grouped photo g2b into group 1
+    r = client.put('/api/documents/g2b', headers=h, json={'group': g1})
+    assert r.status_code == 200
+    d = client.get('/api/documents/g2b', headers=h).json()
+    assert d['metadata']['group_id'] == g1
+    assert d['metadata']['explanation'] == 'Kegiatan apel pagi'
+    # g2 still has one member
+    assert client.get('/api/documents/g2a', headers=h).json()['metadata']['group_id'] == g2
+    # unknown target group -> 404
+    assert client.put('/api/documents/g2a', headers=h, json={'group': 'nope'}).status_code == 404
+    # unauthenticated -> 401
+    assert client.put('/api/documents/g2a', json={'group': g1}).status_code == 401
+
+def test_identify_endpoints():
+    h = _auth()
+    _wh('i1', 'p.jpg', 'image/jpeg', sender='628800')
+    client.post('/webhook/waha', json={'id': 'evt-ti', 'message': {'id': 'ti', 'from': '628800', 'body': 'Laporan giat'}})
+    gid = client.get('/api/documents/i1', headers=h).json()['metadata']['group_id']
+    # no AI provider configured in tests -> 503
+    assert client.post('/api/documents/i1/identify', headers=h).status_code == 503
+    assert client.post(f'/api/documents/group/{gid}/identify', headers=h).status_code == 503
+    # doc without any caption/explanation -> 400
+    _wh('i2', 'plain.pdf')
+    assert client.post('/api/documents/i2/identify', headers=h).status_code == 400
+    # unknown ids -> 404
+    assert client.post('/api/documents/nope/identify', headers=h).status_code == 404
+    assert client.post('/api/documents/group/nope/identify', headers=h).status_code == 404
+    # unauthenticated -> 401
+    assert client.post('/api/documents/i1/identify').status_code == 401
+
+def test_verify_preserves_existing_identity():
+    h = _auth()
+    _wh('v1', 'k.jpg', 'image/jpeg', sender='628900')
+    client.post('/webhook/waha', json={'id': 'evt-tv', 'message': {'id': 'tv', 'from': '628900', 'body': 'teks mentah panjang'}})
+    # simulate an AI-built identity already present on the doc
+    doc = client.get('/api/documents/v1', headers=h).json()
+    assert doc['metadata'].get('explanation')
+    # verify would normally overwrite identity with the raw text; first give it one
+    r = client.post('/api/documents/verify', headers=h, json={'ids': ['v1'], 'folder': ''})
+    assert r.status_code == 200
+    ident = client.get('/api/documents/v1', headers=h).json()['metadata']['identity']
+    assert ident['title'] == 'teks mentah panjang'  # fallback path uses explanation
+    assert client.get('/api/documents/v1', headers=h).json()['status'] == 'analyzed'

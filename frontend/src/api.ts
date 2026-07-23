@@ -30,6 +30,8 @@ export async function updateDocument(id: string, data: any) { return request(`/a
 export async function moveDocuments(ids: string[], folder: string) { return request('/api/documents/move', { method: 'POST', body: JSON.stringify({ ids, folder }) }); }
 export async function renameFolder(oldName: string, newName: string) { return request('/api/folders/rename', { method: 'POST', body: JSON.stringify({ old: oldName, new: newName }) }); }
 export async function deleteGroup(gid: string) { return request(`/api/documents/group/${encodeURIComponent(gid)}`, { method: 'DELETE' }); }
+export async function identifyDocument(id: string) { return request(`/api/documents/${encodeURIComponent(id)}/identify`, { method: 'POST' }); }
+export async function identifyGroup(gid: string) { return request(`/api/documents/group/${encodeURIComponent(gid)}/identify`, { method: 'POST' }); }
 
 export async function getSettings() { return request('/api/settings'); }
 export async function saveSettings(data: any) { return request('/api/settings', { method: 'PUT', body: JSON.stringify(data) }); }
