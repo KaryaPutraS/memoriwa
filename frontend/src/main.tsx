@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput } from 'lucide-react';
+import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput, Wand2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup } from './api';
+import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -62,6 +62,9 @@ function App() {
   const renameF = async (oldN:string, newN:string)=>{ await renameFolder(oldN, newN).catch(()=>{}); refreshDocs(); flash('Folder renamed'); };
   const delMany = async (ids:string[])=>{ await Promise.all(ids.map(id=>deleteDocument(id).catch(()=>{}))); setDocs(ds=>ds.filter(d=>!ids.includes(d.id))); flash('Deleted'); };
   const delGroup = async (gid:string)=>{ await deleteGroup(gid).catch(()=>{}); setDocs(ds=>ds.filter(d=>d.metadata?.group_id!==gid)); flash('Group deleted'); };
+  const identify = async (id:string)=>{ flash('Identifying with AI...'); await identifyDocument(id).catch(()=>flash('Identify failed — check AI provider')); refreshDocs(); flash('Done!'); };
+  const identifyG = async (gid:string)=>{ flash('Identifying with AI...'); await identifyGroup(gid).catch(()=>flash('Identify failed — check AI provider')); refreshDocs(); flash('Done!'); };
+  const regroup = async (id:string, gid:string)=>{ await updateDocument(id,{group:gid}).catch(()=>{}); refreshDocs(); flash('Photo moved'); };
   const doLogout = ()=>{ logout(); setTok(''); };
 
   // Branding: apply custom favicon saved in Settings
@@ -112,8 +115,8 @@ function App() {
       </aside>
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
-        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc} delMany={delMany} delGroup={delGroup} verify={verifyDocs} saveGroup={saveGroup}/>}
-        {page==='Files' && <FilesPage docs={docs} analyze={analyze} del={deleteDoc} editDoc={editDoc} moveDocs={moveDocs} renameF={renameF}/>}
+        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc} delMany={delMany} delGroup={delGroup} verify={verifyDocs} saveGroup={saveGroup} identifyG={identifyG} regroup={regroup}/>}
+        {page==='Files' && <FilesPage docs={docs} analyze={analyze} del={deleteDoc} editDoc={editDoc} moveDocs={moveDocs} renameF={renameF} identify={identify}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
           onSave={async(s:any)=>{try{setSettings(await saveSettings(s));flash('Saved')}catch{flash('Save failed')}}}
@@ -137,7 +140,7 @@ function LoginScreen({onLogin}:{onLogin:(t:string)=>void}) {
   </div></div>;
 }
 
-function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGroup}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void;delMany:(ids:string[])=>void;delGroup:(gid:string)=>void;verify:(ids:string[],folder:string)=>void;saveGroup:(gid:string,expl:string,folder:string)=>void}) {
+function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGroup,identifyG,regroup}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void;delMany:(ids:string[])=>void;delGroup:(gid:string)=>void;verify:(ids:string[],folder:string)=>void;saveGroup:(gid:string,expl:string,folder:string)=>void;identifyG:(gid:string)=>void;regroup:(id:string,gid:string)=>void}) {
   const [q,sq]=useState(''),[f,sf]=useState('All'),[sel,ssel]=useState<string[]>([]);
   const fd=React.useMemo(()=>{
     // Inbox is the work queue: analyzed files live under Files instead.
@@ -170,7 +173,7 @@ function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGro
     <div className="cd">
       <div className="cd-hd"><b>Documents ({fd.length})</b></div>
       {fd.length===0?<div className="em"><FileText size={32}/><b>No documents</b><p>Send a file or image to your WhatsApp.</p></div>
-      :<>{grouped.g.map(([gid,gdocs])=><GroupCard key={gid} gid={gid} docs={gdocs} onVerify={verify} onSave={saveGroup} onDeleteSelected={delMany} onDeleteGroup={delGroup}/>)}
+      :<>{grouped.g.map(([gid,gdocs])=><GroupCard key={gid} gid={gid} docs={gdocs} onVerify={verify} onSave={saveGroup} onDeleteSelected={delMany} onDeleteGroup={delGroup} onRegroup={regroup} onIdentifyGroup={identifyG} otherGroups={grouped.g.filter(([g2]:any)=>g2!==gid).map(([g2,gd]:any)=>({gid:g2,title:gd[0]?.metadata?.identity?.title||gd[0]?.metadata?.explanation||'Photo group'}))}/>)}
       {grouped.s.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)}/>)}</>}
     </div>
   </div>;
@@ -178,38 +181,53 @@ function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGro
 
 function M({n,l,c}:{n:number;l:string;c:string}) { return <div className="mt"><span className="mt-n" style={{color:c}}>{n}</span><span className="mt-l">{l}</span></div>; }
 
-// One photo inside a group grid: tap the image to include/exclude it.
-function GroupThumb({doc,on,flip}:{doc:Doc;on:boolean;flip:()=>void}) {
+// One photo inside a group grid: tap to include/exclude it, drag it onto
+// another group card to move it there (photo was grouped wrong).
+function GroupThumb({doc,on,flip,gid}:{doc:Doc;on:boolean;flip:()=>void;gid:string}) {
   const url=useAuthFileUrl(doc.id,true);
-  return <div className={`gthumb ${on?'':'off'}`} onClick={flip} title={doc.filename}>
+  return <div className={`gthumb ${on?'':'off'}`} onClick={flip} title={doc.filename}
+    draggable
+    onDragStart={e=>{e.dataTransfer.setData('application/x-mw-doc',JSON.stringify({id:doc.id,gid}));e.dataTransfer.effectAllowed='move';e.stopPropagation()}}>
     <input type="checkbox" checked={on} onChange={flip} onClick={e=>e.stopPropagation()}/>
-    {url?<img src={url} alt={doc.filename}/>:<div className="gph"><Image size={18}/></div>}
+    {url?<img src={url} alt={doc.filename} draggable={false}/>:<div className="gph"><Image size={18}/></div>}
   </div>;
 }
 
 // A photo burst + its WhatsApp caption, waiting for human verification.
 // Photos are shown so the user can pick which ones belong — only the
 // selected ones are verified into Files; the rest can be deleted here.
-function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup}:{gid:string;docs:Doc[];onVerify:(ids:string[],folder:string)=>void;onSave:(gid:string,expl:string,folder:string)=>void;onDeleteSelected?:(ids:string[])=>void;onDeleteGroup?:(gid:string)=>void}) {
+function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRegroup,onIdentifyGroup,otherGroups}:{gid:string;docs:Doc[];onVerify:(ids:string[],folder:string)=>void;onSave:(gid:string,expl:string,folder:string)=>void;onDeleteSelected?:(ids:string[])=>void;onDeleteGroup?:(gid:string)=>void;onRegroup?:(id:string,gid:string)=>void;onIdentifyGroup?:(gid:string)=>void;otherGroups?:{gid:string;title:string}[]}) {
   const first=docs[0]||{};
   const [edit,setEdit]=useState(false);
+  const [dragOver,setDragOver]=useState(false);
+  const [moveTo,setMoveTo]=useState('');
   const [selp,setSelp]=useState<string[]>(docs.map(d=>d.id));
   const [expl,setExpl]=useState(first.metadata?.explanation||'');
   const [folder,setFolder]=useState(first.metadata?.folder||'');
   useEffect(()=>{setExpl(first.metadata?.explanation||'');setFolder(first.metadata?.folder||'');setSelp(docs.map(d=>d.id))},[first.metadata?.explanation,first.metadata?.folder,docs.length]);
   const flip=(id:string)=>setSelp(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
-  const ids=docs.map(d=>d.id);
-  return <div className="dw">
+  const title=first.metadata?.identity?.title||first.metadata?.explanation||'Photo group';
+  const onDrop=(e:React.DragEvent)=>{
+    e.preventDefault();setDragOver(false);
+    try{
+      const d=JSON.parse(e.dataTransfer.getData('application/x-mw-doc')||'{}');
+      if(d.id&&d.gid&&d.gid!==gid&&onRegroup)onRegroup(d.id,gid);
+    }catch{}
+  };
+  return <div className={`dw ${dragOver?'dragover':''}`}
+    onDragOver={e=>{if(e.dataTransfer.types.includes('application/x-mw-doc')){e.preventDefault();setDragOver(true)}}}
+    onDragLeave={()=>setDragOver(false)} onDrop={onDrop}>
     <div className="dr" onClick={()=>setEdit(!edit)}>
       <div className="di"><Image size={17}/></div>
-      <div className="dn"><div className="dnm">{first.metadata?.explanation||'Photo group'}</div><div className="dnt">{docs.length} foto · {first.sender}{first.metadata?.folder?' · '+first.metadata.folder:''}</div></div>
+      <div className="dn"><div className="dnm">{title}</div><div className="dnt">{docs.length} foto · {first.sender}{first.metadata?.folder?' · '+first.metadata.folder:''}</div></div>
       <span className="ds" style={{background:'#f59e0b18',color:'#f59e0b',borderColor:'#f59e0b'}}>review</span>
+      {onIdentifyGroup&&<button className="bi" title="AI: extract keywords as identity" onClick={e=>{e.stopPropagation();onIdentifyGroup(gid)}}><Wand2 size={13}/></button>}
       <button className="bi" title="Verify selected & save to Files" onClick={e=>{e.stopPropagation();if(selp.length)onVerify(selp,folder)}}><Check size={14}/></button>
       <button className="bi" title="Edit explanation / folder" onClick={e=>{e.stopPropagation();setEdit(!edit)}}><Pencil size={13}/></button>
       <ChevronRight size={15} className={`dc ${edit?'rt':''}`}/>
     </div>
     <div className="ggrid" onClick={e=>e.stopPropagation()}>
-      {docs.map(d=><GroupThumb key={d.id} doc={d} on={selp.includes(d.id)} flip={()=>flip(d.id)}/>)}
+      {docs.map(d=><GroupThumb key={d.id} doc={d} gid={gid} on={selp.includes(d.id)} flip={()=>flip(d.id)}/>)}
     </div>
     <div className="pa">
       <button className="btn sm" disabled={!selp.length} onClick={()=>onVerify(selp,folder)}><Check size={12}/> Verify selected ({selp.length})</button>
@@ -219,6 +237,13 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup}:{gi
     {edit&&<div className="dp"><div className="p4 s3">
       <div className="fi"><label>Explanation</label><textarea className="inp" rows={3} value={expl} onChange={e=>setExpl(e.target.value)}/></div>
       <div className="fi"><label>Folder (manual, optional)</label><input className="inp" value={folder} onChange={e=>setFolder(e.target.value)} placeholder="mis. dokumentasi kegiatan"/></div>
+      {!!(otherGroups&&otherGroups.length&&onRegroup)&&<div className="fi"><label>Move selected photos to another group</label>
+        <div className="fl g2">
+          <select className="inp" value={moveTo} onChange={e=>setMoveTo(e.target.value)}><option value="">— pilih grup tujuan —</option>{otherGroups.map(g=><option key={g.gid} value={g.gid}>{g.title.slice(0,60)}</option>)}</select>
+          <button className="btn sm" disabled={!moveTo||!selp.length} onClick={()=>{selp.forEach(id=>onRegroup(id,moveTo));setMoveTo('')}}><FolderInput size={12}/> Move</button>
+        </div>
+        <p className="xs mu">Di komputer: foto juga bisa di-drag langsung ke kartu grup lain.</p>
+      </div>}
       <div className="fl g2">
         <button className="btn sm" onClick={()=>onSave(gid,expl,folder)}>Save changes</button>
         <button className="btn pr" disabled={!selp.length} onClick={()=>onVerify(selp,folder)}><Check size={12}/> Verify & save to Files</button>
@@ -227,22 +252,25 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup}:{gi
   </div>;
 }
 
-function DocRow({doc,sel,toggle,analyze,del,onEdit,folders}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[]}) {
+function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void}) {
   const [o,so]=useState(false);
   const [editing,setEditing]=useState(false);
   const [etitle,setEtitle]=useState('');
   const [efolder,setEfolder]=useState('');
   const im=doc.mime_type?.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif)$/i.test(doc.filename||'');
   const pd=doc.mime_type==='application/pdf';
-  const pv=useAuthFileUrl(doc.id, o);
+  const pv=useAuthFileUrl(doc.id, im||o);
   const cl=SC[doc.status]||'#999';
+  const tags:string[]=(doc.metadata?.identity?.tags||[]).slice(0,3);
   const startEdit=()=>{setEtitle(doc.metadata?.identity?.title||doc.filename||'');setEfolder(doc.metadata?.folder||'');setEditing(true);so(true)};
   return <div className="dw">
     <div className="dr" onClick={()=>so(!o)}>
       <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
-      <div className="di">{im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
-      <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div></div>
+      <div className="di">{im&&pv?<img src={pv} className="tt" alt=""/>:im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
+      <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.metadata?.explanation||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div>
+      {!!tags.length&&<div className="tchips">{tags.map(t=><span key={t} className="tchip">{t}</span>)}</div>}</div>
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}{doc.status==='processing'&&typeof doc.metadata?.progress==='number'?` ${doc.metadata.progress}%`:''}</span>
+      {onIdentify&&!!(doc.metadata?.explanation||doc.metadata?.caption)&&<button className="bi" title="AI: extract keywords as identity" onClick={e=>{e.stopPropagation();onIdentify(doc.id)}}><Wand2 size={13}/></button>}
       <button className="bi" title="Analyze" onClick={e=>{e.stopPropagation();analyze()}}><Sparkles size={13}/></button>
       {onEdit&&<button className="bi" title="Edit" onClick={e=>{e.stopPropagation();startEdit()}}><Pencil size={13}/></button>}
       {del&&<button className="bi" title="Delete" onClick={e=>{e.stopPropagation();del()}}><Trash2 size={13}/></button>}
@@ -251,6 +279,7 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders}:{doc:Doc;sel:string[
     {o&&<div className="dp"><div className="dg"><div className="dp-info"><b>{doc.filename}</b>
       <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
       {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
+      {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
       {!im&&doc.metadata?.extracted_text&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Preview:</span>{doc.metadata.extracted_text.slice(0,400)}{doc.metadata.extracted_text.length>400?'…':''}</div></div>}
       {im&&pv&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
       {pd&&<div className="pm pf"><FileIcon size={32}/><b>PDF</b><span>Document</span></div>}
@@ -269,7 +298,7 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders}:{doc:Doc;sel:string[
     </div>;
 }
 
-function FilesPage({docs,analyze,del,editDoc,moveDocs,renameF}:{docs:Doc[];analyze:(id:string)=>void;del:(id:string)=>void;editDoc:(id:string,patch:any)=>void;moveDocs:(ids:string[],folder:string)=>void;renameF:(oldN:string,newN:string)=>void}) {
+function FilesPage({docs,analyze,del,editDoc,moveDocs,renameF,identify}:{docs:Doc[];analyze:(id:string)=>void;del:(id:string)=>void;editDoc:(id:string,patch:any)=>void;moveDocs:(ids:string[],folder:string)=>void;renameF:(oldN:string,newN:string)=>void;identify:(id:string)=>void}) {
   const [q,sq]=useState(''),[folder,setFolder]=useState('');
   const [sel,ssel]=useState<string[]>([]);
   const [renaming,setRenaming]=useState(''),[rname,setRname]=useState('');
@@ -328,7 +357,7 @@ function FilesPage({docs,analyze,del,editDoc,moveDocs,renameF}:{docs:Doc[];analy
       {list.length>0&&<button className="btn sm" onClick={()=>{const ids=list.map(d=>d.id);ssel(sel.length===ids.length?[]:ids)}}>{sel.length===list.length?'Unselect all':'Select all'}</button>}
     </div>
       {list.length===0?<div className="em"><FileText size={32}/><b>No files found</b></div>
-      :list.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onEdit={editDoc} folders={allNames}/>)}
+      :list.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onEdit={editDoc} folders={allNames} onIdentify={identify}/>)}
     </div>}
   </div>;
 }
