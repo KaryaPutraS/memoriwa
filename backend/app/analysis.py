@@ -274,12 +274,49 @@ async def build_identity(text: str, cfg: dict) -> dict:
         return parse_identity(raw)
 
 
+import re
+
+# Greeting / reporting-filler prefixes common in Indonesian activity reports.
+_GREETING = re.compile(
+    r"^(?:[\s\u200e\u200f,.:;!-]*(?:assalamu['\"]?alaikum|wr\.?\s*wb\.?|selamat\s+(?:pagi|siang|sore|malam)|"
+    r"komandan|bapak|ibu|pak|mohon\s+i+j?in|i+j?in\s+melaporkan|izin\s+melaporkan|melaporkan|"
+    r"salam\s+sejahtera|yang\s+terhormat|yth\.?)\b[\s\u200e\u200f,.:;!-]*)+",
+    re.IGNORECASE)
+_STOPWORDS = {"dan", "yang", "di", "ke", "dari", "the", "a", "an", "of", "to", "giat",
+              "kegiatan", "situasi", "aman", "lancar", "kondusif", "dum", "dokumentasi",
+              "laporan", "hasil", "saat", "ini", "tersebut", "pada", "hari", "tanggal",
+              "jam", "pukul", "wib"}
+
+
+def _caption_fallback(caption: str) -> dict:
+    """Deterministic identity for when the model keeps answering prose:
+    strip the greeting/reporting prefix and keep the activity keywords."""
+    core = _GREETING.sub("", caption or "").strip()
+    core = re.sub(r"\s+", " ", core).strip(" .,")
+    words = core.split(" ") if core else []
+    title = " ".join(words[:8]) or (caption or "Dokumentasi")[:80]
+    sig = [w.strip(".,;:!?()").lower() for w in words]
+    sig = [w for w in sig if len(w) > 2 and w not in _STOPWORDS and not w.isdigit()]
+    doc_type = " ".join(sig[:2]) if sig else "dokumentasi kegiatan"
+    seen: set[str] = set()
+    tags: list[str] = []
+    for w in sig:
+        if w not in seen:
+            seen.add(w)
+            tags.append(w)
+        if len(tags) >= 6:
+            break
+    return {"title": title, "doc_type": doc_type, "summary": (core or caption or "")[:200], "tags": tags}
+
+
 async def caption_identity(repo, caption: str) -> dict | None:
     """Clean identity (title/tags/doc_type) for a photo burst, extracted by the
     configured AI from the raw WhatsApp caption/report text.
 
     Returns None when no AI provider is configured or the call fails — the
-    caller then keeps the raw caption as the title.
+    caller then keeps the raw caption as the title. When the model answers
+    prose instead of JSON twice, a deterministic greeting-stripping fallback
+    still produces a usable identity.
     """
     cfg = await _llm_config(repo)
     if not cfg:
@@ -294,7 +331,11 @@ async def caption_identity(repo, caption: str) -> dict | None:
                 {"role": "system", "content": "You answer with a single raw JSON object only — no prose, no markdown."},
                 *msgs,
             ], max_tokens=400)
-            return parse_identity(raw)
+            try:
+                return parse_identity(raw)
+            except ValueError:
+                logger.warning("Caption identity: model kept answering prose — heuristic fallback used")
+                return _caption_fallback(caption)
     except Exception as e:
         logger.warning("Caption identity failed: %s", e)
         return None

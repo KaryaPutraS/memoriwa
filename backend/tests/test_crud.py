@@ -151,3 +151,14 @@ def test_verify_preserves_existing_identity():
     ident = client.get('/api/documents/v1', headers=h).json()['metadata']['identity']
     assert ident['title'] == 'teks mentah panjang'  # fallback path uses explanation
     assert client.get('/api/documents/v1', headers=h).json()['status'] == 'analyzed'
+
+def test_caption_fallback_strips_greetings():
+    from app.analysis import _caption_fallback
+    ident = _caption_fallback('\u200eAssalamualaikum Selamat Pagi Komandan ijin melaporkan giat piket Senkom dan pengecekan MSO situasi aman lancar \u200eDum.')
+    assert not ident['title'].lower().startswith('assalamu')
+    assert 'piket' in ident['title'].lower()
+    assert ident['doc_type'].startswith('piket')
+    assert 'senkom' in ident['tags']
+    # empty / greeting-only captions stay sane
+    ident2 = _caption_fallback('Assalamualaikum wr wb')
+    assert ident2['title']
