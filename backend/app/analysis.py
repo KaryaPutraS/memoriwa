@@ -47,6 +47,17 @@ Respond with ONLY the JSON object, no markdown fences, no commentary.
 DOCUMENT TEXT:
 """
 
+CAPTION_IDENTITY_PROMPT = """You are given the text of a WhatsApp activity report (usually Indonesian, often starting with greetings like "Assalamualaikum", "izin melaporkan", "mohon ijin"). It is the caption of a set of activity photos. Produce a JSON object with exactly these keys:
+- "title": short activity title, max 8 words, WITHOUT any greeting or reporting filler — just the activity itself (e.g. "Apel Pagi Komandan Pers Bid TIK", "Piket Senkom dan Pengamanan Mako")
+- "doc_type": the activity type, 1-3 lowercase words (e.g. "apel pagi", "piket senkom", "rapat koordinasi", "pengamanan")
+- "summary": 1 sentence summary in Indonesian, without greetings
+- "tags": list of 3-6 lowercase keywords (activity, unit/organization, people, place)
+- "language": ISO 639-1 code
+Respond with ONLY the JSON object, no markdown fences, no commentary.
+
+REPORT TEXT:
+"""
+
 
 # ---------- LLM configuration ----------
 
@@ -261,6 +272,32 @@ async def build_identity(text: str, cfg: dict) -> dict:
             *msgs,
         ], max_tokens=1024)
         return parse_identity(raw)
+
+
+async def caption_identity(repo, caption: str) -> dict | None:
+    """Clean identity (title/tags/doc_type) for a photo burst, extracted by the
+    configured AI from the raw WhatsApp caption/report text.
+
+    Returns None when no AI provider is configured or the call fails — the
+    caller then keeps the raw caption as the title.
+    """
+    cfg = await _llm_config(repo)
+    if not cfg:
+        return None
+    msgs = [{"role": "user", "content": CAPTION_IDENTITY_PROMPT + caption[:2000]}]
+    try:
+        raw = await _chat(cfg, cfg["text_model"], msgs, max_tokens=400)
+        try:
+            return parse_identity(raw)
+        except ValueError:
+            raw = await _chat(cfg, cfg["text_model"], [
+                {"role": "system", "content": "You answer with a single raw JSON object only — no prose, no markdown."},
+                *msgs,
+            ], max_tokens=400)
+            return parse_identity(raw)
+    except Exception as e:
+        logger.warning("Caption identity failed: %s", e)
+        return None
 
 
 # ---------- Orchestration ----------

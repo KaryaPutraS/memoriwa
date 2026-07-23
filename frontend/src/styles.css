@@ -6,3 +6,7 @@
 .gthumb input{position:absolute;top:4px;left:4px;z-index:2;width:15px;height:15px;accent-color:#111}
 .gph{display:flex;align-items:center;justify-content:center;height:100%;background:#eee;color:#999}
 .fr .inp{margin-bottom:0;padding:4px 8px}
+.tt{width:34px;height:34px;object-fit:cover;border-radius:8px;display:block}
+.tchips{display:flex;gap:4px;margin-top:3px;flex-wrap:wrap}
+.tchip{font-size:10px;font-weight:700;background:#f0f0f5;border:1.5px solid #ddd;border-radius:10px;padding:1px 8px;color:#666}
+.dw.dragover{outline:3px dashed #c8f31d;outline-offset:-3px;background:#faffea}
