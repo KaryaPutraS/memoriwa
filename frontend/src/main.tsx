@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput, Wand2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup } from './api';
+import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup, changePassword } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -389,6 +389,7 @@ function SettingsPage({settings,provs,onSave,onAdd,onDel,onToggle}:any) {
         <p className="xs mu">PNG/JPG up to 300 KB. Saved to the server, applied for all browsers.</p>
         <button className="btn pr" onClick={()=>onSave(loc)}>Save</button>
       </div></div>
+      <PasswordCard/>
     </>}
     {tab==='ai'&&<><VisionCard settings={settings} onSave={onSave}/><AITab pv={provs} onAdd={onAdd} onDel={onDel} onToggle={onToggle}/></>}
   </div>;
@@ -488,6 +489,30 @@ function VisionCard({settings,onSave}:{settings:any;onSave:(s:any)=>void}) {
 
 function FL({label,val,onChange,sl,opts,pw}:{label:string;val:string;onChange:(v:string)=>void;sl?:boolean;opts?:{v:string;l:string}[];pw?:boolean}) {
   return <div className="fi"><label>{label}</label>{sl&&opts?<select className="inp" value={val} onChange={e=>onChange(e.target.value)}>{opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select>:<input className="inp" type={pw?'password':'text'} value={val} onChange={e=>onChange(e.target.value)}/>}</div>;
+}
+
+// Self-contained change-password card (Settings -> General). The new
+// password replaces the env password from then on and survives restarts.
+function PasswordCard() {
+  const [cur,setCur]=useState(''),[nw,setNw]=useState(''),[cf,setCf]=useState('');
+  const [err,setErr]=useState(''),[ok,setOk]=useState(false),[busy,setBusy]=useState(false);
+  const go=async()=>{
+    setErr('');setOk(false);
+    if(nw.length<8){setErr('Password baru minimal 8 karakter');return}
+    if(nw!==cf){setErr('Konfirmasi password tidak sama');return}
+    setBusy(true);
+    try{await changePassword(cur,nw);setOk(true);setCur('');setNw('');setCf('')}
+    catch{setErr('Gagal menyimpan — periksa password saat ini')}
+    setBusy(false);
+  };
+  return <div className="cd"><div className="cd-hd"><b>Change Password</b></div><div className="p4 s3">
+    <div className="fi"><label>Password saat ini</label><input className="inp" type="password" value={cur} onChange={e=>setCur(e.target.value)} autoComplete="current-password"/></div>
+    <div className="fi"><label>Password baru (min. 8 karakter)</label><input className="inp" type="password" value={nw} onChange={e=>setNw(e.target.value)} autoComplete="new-password"/></div>
+    <div className="fi"><label>Ulangi password baru</label><input className="inp" type="password" value={cf} onChange={e=>setCf(e.target.value)} autoComplete="new-password" onKeyDown={e=>e.key==='Enter'&&go()}/></div>
+    {err&&<div className="er">{err}</div>}
+    {ok&&<div className="hb"><Check size={12}/>Password berhasil diganti — gunakan saat login berikutnya.</div>}
+    <button className="btn pr" disabled={busy||!cur||!nw} onClick={go}>{busy?<RotateCw size={13} className="sp-anim"/>:<Check size={13}/>} Simpan password</button>
+  </div></div>;
 }
 
 const el=document.getElementById('root');if(el)createRoot(el).render(<App/>);
