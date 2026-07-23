@@ -136,7 +136,10 @@ if [ "$UPDATE" = "1" ]; then
   if [ "$PORT_SET" = "1" ]; then
     sed -i.bak "s|^WEB_PORT=.*|WEB_PORT=$WEB_PORT|" .env && rm -f .env.bak
   fi
-  ADMIN_PASSWORD="(unchanged — see $INSTALL_DIR/.env)"
+  # Display-only: never overwrite the real ADMIN_PASSWORD sourced from .env,
+  # or docker compose would inject this text into the api container instead
+  # (shell env beats --env-file during compose variable substitution).
+  DISPLAY_PW="(unchanged — see $INSTALL_DIR/.env)"
 else
   if [ -z "$DOMAIN" ]; then
     _detected="$(curl -fs --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)"
@@ -188,7 +191,7 @@ cat <<EOF
 
   Dashboard : $PUBLIC_URL   (locally: http://127.0.0.1:$WEB_PORT)
   Username  : ${ADMIN_USERNAME:-admin}
-  Password  : $ADMIN_PASSWORD
+  Password  : ${DISPLAY_PW:-$ADMIN_PASSWORD}
 
   Next step: open the dashboard → Settings → Connect, and scan the QR code
   with the WhatsApp number that will receive documents.
