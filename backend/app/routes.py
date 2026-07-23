@@ -197,6 +197,9 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
             if attached:
                 for d in attached:
                     await ws_manager.broadcast({"type": "document.updated", "data": d})
+                # Background: turn the raw report text into a clean identity
+                # (keywords title/tags) with the configured AI.
+                asyncio.create_task(_ai_identify_burst(repo, attached, body))
                 return {"accepted": True, "caption_group": eid, "images": len(attached), "event_id": eid}
             return {"accepted": False, "reason": "text-only message", "event_id": eid}
         return {"accepted": False, "reason": "no media found", "event_id": eid}
@@ -248,6 +251,7 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
         attached = await _attach_caption(repo, msg, caption, eid)
         for d in attached:
             await ws_manager.broadcast({"type": "document.updated", "data": d})
+        asyncio.create_task(_ai_identify_burst(repo, attached, caption))
 
     settings = await repo.get_settings() or {}
     # Images are not auto-analyzed: activity photos wait for their caption
@@ -329,6 +333,29 @@ async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
         out.append(d)
     return out
 
+async def _ai_identify_burst(repo, docs: list[dict], text: str) -> None:
+    """Background task: ask the configured AI to condense the raw report text
+    into a keyword identity (short title, activity doc_type, tags) and stamp it
+    on every photo of the burst, so Files/Inbox show "Apel Pagi Bid TIK"
+    instead of the full greeting-laden caption."""
+    try:
+        ident = await analysis.caption_identity(repo, text)
+        if not ident:
+            return
+        for d in docs:
+            cur = await repo.get_document(d["id"])
+            if not cur:
+                continue
+            if cur.get("status") == "analyzed":
+                continue  # never clobber a finished analysis
+            meta = dict(cur.get("metadata") or {})
+            meta["identity"] = ident
+            cur["metadata"] = meta
+            await repo.update_document(cur["id"], cur)
+            await ws_manager.broadcast({"type": "document.updated", "data": cur})
+    except Exception as e:
+        logger.warning("burst identity failed: %s", e)
+
 class VerifyRequest(BaseModel): ids: list[str]; folder: str = ""
 class GroupUpdateRequest(BaseModel): explanation: str | None = None; folder: str | None = None
 
@@ -344,12 +371,17 @@ async def verify_documents(body: VerifyRequest, user: str=Depends(auth.get_curre
         expl = str(meta.get("explanation") or meta.get("caption") or doc.get("filename") or "Dokumentasi")
         if body.folder:
             meta["folder"] = body.folder
-        meta["identity"] = {
-            "title": expl[:80],
-            "doc_type": meta.get("folder") or "dokumentasi kegiatan",
-            "summary": expl,
-            "tags": meta.get("tags") or [],
-        }
+        # Keep an identity the AI already built from the caption (clean
+        # keyword title) — only fall back to the raw explanation when none
+        # exists yet.
+        _ident = meta.get("identity")
+        if not (isinstance(_ident, dict) and _ident.get("title")):
+            meta["identity"] = {
+                "title": expl[:80],
+                "doc_type": meta.get("folder") or "dokumentasi kegiatan",
+                "summary": expl,
+                "tags": meta.get("tags") or [],
+            }
         meta["progress"] = 100
         doc["metadata"] = meta
         doc["status"] = "analyzed"
@@ -381,6 +413,7 @@ class DocUpdateRequest(BaseModel):
     explanation: str | None = None
     title: str | None = None
     ungroup: bool = False
+    group: str | None = None  # target group_id — move this doc into another group
 
 @router.put("/api/documents/{doc_id}")
 async def update_document_meta(doc_id: str, body: DocUpdateRequest, user: str=Depends(auth.get_current_user)):
@@ -410,6 +443,20 @@ async def update_document_meta(doc_id: str, body: DocUpdateRequest, user: str=De
     if body.ungroup:
         meta.pop("group_id", None)
         meta.pop("explanation", None)
+    if body.group is not None:
+        # Drag-and-drop move: adopt the target group's explanation and
+        # identity so the moved photo looks like a native member.
+        result = await repo.get_documents(limit=100)
+        members = [d for d in result["items"]
+                   if (d.get("metadata") or {}).get("group_id") == body.group and d.get("id") != doc_id]
+        if not members:
+            raise HTTPException(404, "target group not found")
+        mmeta = members[0].get("metadata") or {}
+        meta["group_id"] = body.group
+        if mmeta.get("explanation") is not None:
+            meta["explanation"] = mmeta.get("explanation")
+        if isinstance(mmeta.get("identity"), dict):
+            meta["identity"] = mmeta["identity"]
     doc["metadata"] = meta
     await repo.update_document(doc_id, doc)
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
@@ -471,6 +518,49 @@ async def delete_group(group_id: str, user: str=Depends(auth.get_current_user)):
         n += 1
     if not n: raise HTTPException(404)
     return {"deleted": n}
+
+@router.post("/api/documents/group/{group_id}/identify")
+async def identify_group(group_id: str, user: str=Depends(auth.get_current_user)):
+    """Re-run AI keyword extraction for a whole photo group: one AI call on
+    the group's explanation/caption, applied to every member."""
+    repo = await get_repository()
+    result = await repo.get_documents(limit=100)
+    members = [d for d in result["items"] if (d.get("metadata") or {}).get("group_id") == group_id]
+    if not members: raise HTTPException(404)
+    text = ""
+    for d in members:
+        m = d.get("metadata") or {}
+        text = str(m.get("explanation") or m.get("caption") or "")
+        if text: break
+    if not text: raise HTTPException(400, "Group has no explanation/caption text")
+    ident = await analysis.caption_identity(repo, text)
+    if ident is None: raise HTTPException(503, "No AI provider configured or the request failed")
+    for d in members:
+        m = dict(d.get("metadata") or {})
+        m["identity"] = ident
+        d["metadata"] = m
+        await repo.update_document(d["id"], d)
+        await ws_manager.broadcast({"type": "document.updated", "data": d})
+    return {"identified": len(members), "identity": ident}
+
+@router.post("/api/documents/{doc_id}/identify")
+async def identify_document(doc_id: str, user: str=Depends(auth.get_current_user)):
+    """Re-run AI keyword extraction for one document from its
+    explanation/caption text (fixes greeting-laden raw titles)."""
+    repo = await get_repository()
+    doc = await repo.get_document(doc_id)
+    if not doc: raise HTTPException(404)
+    meta = doc.get("metadata") or {}
+    text = str(meta.get("explanation") or meta.get("caption") or "")
+    if not text: raise HTTPException(400, "No explanation/caption text to identify from")
+    ident = await analysis.caption_identity(repo, text)
+    if ident is None: raise HTTPException(503, "No AI provider configured or the request failed")
+    meta = dict(meta)
+    meta["identity"] = ident
+    doc["metadata"] = meta
+    await repo.update_document(doc_id, doc)
+    await ws_manager.broadcast({"type": "document.updated", "data": doc})
+    return doc
 
 @router.get("/api/documents")
 async def list_documents(q: str|None=None, status: str|None=None, limit: int=50, user: str=Depends(auth.get_current_user)):
