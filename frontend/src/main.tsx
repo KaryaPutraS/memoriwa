@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput, Wand2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup, changePassword } from './api';
+import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup, changePassword, uploadDocuments, downloadGroupPdf, createShare, getShares, deleteShare, createSmartCollection, getSmartCollections, deleteSmartCollection } from './api';
 import './styles.css';
 
 type Doc = { id:string; filename:string; sender:string; mime_type:string; status:string; metadata?:any; file_url?:string; url?:string; created_at?:string };
@@ -115,8 +115,8 @@ function App() {
       </aside>
       <div className="mc">
         <header className="tb-top"><button className="mu" onClick={()=>setSidebar(!sidebar)}><Menu size={20}/></button><b>MemoriWA</b><div className={`dot ${wahaOk?'on':'off'}`} style={{marginLeft:'auto'}}/></header>
-        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc} delMany={delMany} delGroup={delGroup} verify={verifyDocs} saveGroup={saveGroup} identifyG={identifyG} regroup={regroup}/>}
-        {page==='Files' && <FilesPage docs={docs} analyze={analyze} del={deleteDoc} editDoc={editDoc} moveDocs={moveDocs} renameF={renameF} identify={identify}/>}
+        {page==='Inbox' && <InboxPage docs={docs} refreshDocs={refreshDocs} analyze={analyze} del={deleteDoc} delMany={delMany} delGroup={delGroup} verify={verifyDocs} saveGroup={saveGroup} identifyG={identifyG} regroup={regroup} flash={flash}/>}
+        {page==='Files' && <FilesPage docs={docs} refreshDocs={refreshDocs} flash={flash} analyze={analyze} del={deleteDoc} editDoc={editDoc} moveDocs={moveDocs} renameF={renameF} identify={identify}/>}
         {page==='Stats' && <StatsPage docs={docs}/>}
         {page==='Settings' && <SettingsPage settings={settings} provs={provs}
           onSave={async(s:any)=>{try{setSettings(await saveSettings(s));flash('Saved')}catch{flash('Save failed')}}}
@@ -140,10 +140,106 @@ function LoginScreen({onLogin}:{onLogin:(t:string)=>void}) {
   </div></div>;
 }
 
-function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGroup,identifyG,regroup}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void;delMany:(ids:string[])=>void;delGroup:(gid:string)=>void;verify:(ids:string[],folder:string)=>void;saveGroup:(gid:string,expl:string,folder:string)=>void;identifyG:(gid:string)=>void;regroup:(id:string,gid:string)=>void}) {
+function ShareModal({targetType, targetId, onClose, flash}:{targetType:string; targetId:string; onClose:()=>void; flash:(msg:string)=>void}) {
+  const [hours, setHours] = useState('24');
+  const [password, setPassword] = useState('');
+  const [shareUrl, setShareUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      const h = hours ? parseInt(hours) : undefined;
+      const res = await createShare(targetType, targetId, h, password || undefined);
+      const fullUrl = window.location.origin + res.share_url;
+      setShareUrl(fullUrl);
+      flash('Public share link created!');
+    } catch (e: any) {
+      flash('Failed to create share link: ' + (e.message || 'Error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(shareUrl);
+    flash('Link copied to clipboard!');
+  };
+
+  return (
+    <div className="overlay" style={{display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={onClose}>
+      <div className="lg-card" style={{maxWidth:440,width:'90%',background:'#181824',border:'1px solid #333',borderRadius:16,padding:24}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{marginTop:0,marginBottom:12,display:'flex',alignItems:'center',gap:8}}><Share2 size={18}/> Share Public Link</h3>
+        {!shareUrl ? (
+          <>
+            <div className="fi" style={{marginBottom:12}}>
+              <label style={{fontSize:12,color:'#aaa'}}>Expiration Time</label>
+              <select className="inp" value={hours} onChange={e=>setHours(e.target.value)}>
+                <option value="24">24 Hours</option>
+                <option value="168">7 Days</option>
+                <option value="720">30 Days</option>
+                <option value="0">Never (No Expiration)</option>
+              </select>
+            </div>
+            <div className="fi" style={{marginBottom:16}}>
+              <label style={{fontSize:12,color:'#aaa'}}>Password Protection (Optional)</label>
+              <input className="inp" type="password" placeholder="Leave empty for public link" value={password} onChange={e=>setPassword(e.target.value)}/>
+            </div>
+            <div className="fl g2">
+              <button className="btn pr sm" disabled={loading} onClick={handleCreate}>Create Link</button>
+              <button className="btn sm" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="fi" style={{marginBottom:16}}>
+              <label style={{fontSize:12,color:'#aaa'}}>Shareable Link</label>
+              <input className="inp" readOnly value={shareUrl} style={{fontSize:12}}/>
+            </div>
+            <div className="fl g2">
+              <button className="btn pr sm" onClick={copyLink}>Copy Link</button>
+              <button className="btn sm" onClick={onClose}>Close</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UploadZone({onUploaded, flash, folder}:{onUploaded:()=>void; flash:(msg:string)=>void; folder?:string}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true);
+    flash('Uploading file(s)...');
+    try {
+      await uploadDocuments(files, folder);
+      flash(`Uploaded ${files.length} file(s)!`);
+      onUploaded();
+    } catch (err: any) {
+      flash('Upload failed: ' + (err.message || 'Error'));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+  return (
+    <div style={{display:'inline-flex', alignItems:'center'}}>
+      <input type="file" ref={fileRef} multiple style={{display:'none'}} onChange={handleFileChange}/>
+      <button className="btn pr sm" disabled={uploading} onClick={()=>fileRef.current?.click()} style={{gap:5}}>
+        <Plus size={13}/> <span>Upload</span>
+      </button>
+    </div>
+  );
+}
+
+function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGroup,identifyG,regroup,flash}:{docs:Doc[];refreshDocs:()=>void;analyze:(id:string)=>void;del:(id:string)=>void;delMany:(ids:string[])=>void;delGroup:(gid:string)=>void;verify:(ids:string[],folder:string)=>void;saveGroup:(gid:string,expl:string,folder:string)=>void;identifyG:(gid:string)=>void;regroup:(id:string,gid:string)=>void;flash:(msg:string)=>void}) {
   const [q,sq]=useState(''),[f,sf]=useState('All'),[sel,ssel]=useState<string[]>([]);
+  const [shareTarget, setShareTarget] = useState<{type:string; id:string}|null>(null);
   const fd=React.useMemo(()=>{
-    // Inbox is the work queue: analyzed files live under Files instead.
     let d=docs.filter(x=>x.status!=='analyzed');
     if(f==='PDF')d=d.filter(x=>x.mime_type==='application/pdf');
     if(f==='IMAGE')d=d.filter(x=>x.mime_type?.startsWith('image/'));
@@ -151,13 +247,13 @@ function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGro
     return d;
   },[docs,q,f]);
   const toggle=(id:string)=>ssel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
-  // Photo bursts grouped by their caption text appear as one review card.
   const grouped=React.useMemo(()=>{
     const g:Record<string,Doc[]>={};const s:Doc[]=[];
     fd.forEach(d=>{const gid=d.metadata?.group_id;if(gid)(g[gid]=g[gid]||[]).push(d);else s.push(d)});
     return {g:Object.entries(g),s};
   },[fd]);
   return <div className="pg">
+    {shareTarget && <ShareModal targetType={shareTarget.type} targetId={shareTarget.id} onClose={()=>setShareTarget(null)} flash={flash}/>}
     <div className="mx">
       <M n={docs.length} l="Total" c="#c8f31d"/>
       <M n={docs.filter(d=>d.status==='unanalyzed').length} l="Pending" c="#999"/>
@@ -167,14 +263,15 @@ function InboxPage({docs,refreshDocs,analyze,del,delMany,delGroup,verify,saveGro
     <div className="br">
       <div className="sbx"><Search size={15}/><input placeholder="Search..." value={q} onChange={e=>sq(e.target.value)}/></div>
       <div className="cs">{['All','PDF','IMAGE'].map(x=><button key={x} className={`ch ${f===x?'on':''}`} onClick={()=>sf(x)}>{x}</button>)}</div>
+      <UploadZone onUploaded={refreshDocs} flash={flash}/>
       <button className="btn sm" onClick={refreshDocs}><RotateCw size={13}/></button>
       {sel.length>0&&<button className="btn ac" onClick={()=>{sel.forEach(analyze);ssel([])}}><Sparkles size={13}/> Analyze ({sel.length})</button>}
     </div>
     <div className="cd">
       <div className="cd-hd"><b>Documents ({fd.length})</b></div>
       {fd.length===0?<div className="em"><FileText size={32}/><b>No documents</b><p>Send a file or image to your WhatsApp.</p></div>
-      :<>{grouped.g.map(([gid,gdocs])=><GroupCard key={gid} gid={gid} docs={gdocs} onVerify={verify} onSave={saveGroup} onDeleteSelected={delMany} onDeleteGroup={delGroup} onRegroup={regroup} onIdentifyGroup={identifyG} otherGroups={grouped.g.filter(([g2]:any)=>g2!==gid).map(([g2,gd]:any)=>({gid:g2,title:gd[0]?.metadata?.identity?.title||gd[0]?.metadata?.explanation||'Photo group'}))}/>)}
-      {grouped.s.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)}/>)}</>}
+      :<>{grouped.g.map(([gid,gdocs])=><GroupCard key={gid} gid={gid} docs={gdocs} onVerify={verify} onSave={saveGroup} onDeleteSelected={delMany} onDeleteGroup={delGroup} onRegroup={regroup} onIdentifyGroup={identifyG} onShare={(t,id)=>setShareTarget({type:t,id})} otherGroups={grouped.g.filter(([g2]:any)=>g2!==gid).map(([g2,gd]:any)=>({gid:g2,title:gd[0]?.metadata?.identity?.title||gd[0]?.metadata?.explanation||'Photo group'}))}/>)}
+      {grouped.s.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onShare={(t,id)=>setShareTarget({type:t,id})}/>)}</>}
     </div>
   </div>;
 }
@@ -196,7 +293,7 @@ function GroupThumb({doc,on,flip,gid}:{doc:Doc;on:boolean;flip:()=>void;gid:stri
 // A photo burst + its WhatsApp caption, waiting for human verification.
 // Photos are shown so the user can pick which ones belong — only the
 // selected ones are verified into Files; the rest can be deleted here.
-function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRegroup,onIdentifyGroup,otherGroups}:{gid:string;docs:Doc[];onVerify:(ids:string[],folder:string)=>void;onSave:(gid:string,expl:string,folder:string)=>void;onDeleteSelected?:(ids:string[])=>void;onDeleteGroup?:(gid:string)=>void;onRegroup?:(id:string,gid:string)=>void;onIdentifyGroup?:(gid:string)=>void;otherGroups?:{gid:string;title:string}[]}) {
+function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRegroup,onIdentifyGroup,onShare,otherGroups}:{gid:string;docs:Doc[];onVerify:(ids:string[],folder:string)=>void;onSave:(gid:string,expl:string,folder:string)=>void;onDeleteSelected?:(ids:string[])=>void;onDeleteGroup?:(gid:string)=>void;onRegroup?:(id:string,gid:string)=>void;onIdentifyGroup?:(gid:string)=>void;onShare?:(type:string,id:string)=>void;otherGroups?:{gid:string;title:string}[]}) {
   const first=docs[0]||{};
   const [edit,setEdit]=useState(false);
   const [dragOver,setDragOver]=useState(false);
@@ -221,6 +318,7 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRe
       <div className="di"><Image size={17}/></div>
       <div className="dn"><div className="dnm">{title}</div><div className="dnt">{docs.length} foto · {first.sender}{first.metadata?.folder?' · '+first.metadata.folder:''}</div></div>
       <span className="ds" style={{background:'#f59e0b18',color:'#f59e0b',borderColor:'#f59e0b'}}>review</span>
+      {onShare&&<button className="bi" title="Share public link" onClick={e=>{e.stopPropagation();onShare('group',gid)}}><Share2 size={13}/></button>}
       {onIdentifyGroup&&<button className="bi" title="AI: extract keywords as identity" onClick={e=>{e.stopPropagation();onIdentifyGroup(gid)}}><Wand2 size={13}/></button>}
       <button className="bi" title="Verify selected & save to Files" onClick={e=>{e.stopPropagation();if(selp.length)onVerify(selp,folder)}}><Check size={14}/></button>
       <button className="bi" title="Edit explanation / folder" onClick={e=>{e.stopPropagation();setEdit(!edit)}}><Pencil size={13}/></button>
@@ -231,6 +329,7 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRe
     </div>
     <div className="pa">
       <button className="btn sm" disabled={!selp.length} onClick={()=>onVerify(selp,folder)}><Check size={12}/> Verify selected ({selp.length})</button>
+      <button className="btn sm" onClick={()=>downloadGroupPdf(gid)} title="Export PDF Laporan Activity"><FileText size={12}/> Export PDF</button>
       {onDeleteSelected&&<button className="btn sm" disabled={!selp.length} onClick={()=>{if(confirm(`Delete ${selp.length} selected photo(s)?`))onDeleteSelected(selp)}}><Trash2 size={12}/> Delete selected</button>}
       {onDeleteGroup&&<button className="btn sm" onClick={()=>{if(confirm('Delete this whole group?'))onDeleteGroup(gid)}}><Trash2 size={12}/> Delete group</button>}
     </div>
@@ -252,7 +351,7 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRe
   </div>;
 }
 
-function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void}) {
+function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void;onShare?:(type:string,id:string)=>void}) {
   const [o,so]=useState(false);
   const [editing,setEditing]=useState(false);
   const [etitle,setEtitle]=useState('');
@@ -269,7 +368,9 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify}:{doc:Doc;
       <div className="di">{im&&pv?<img src={pv} className="tt" alt=""/>:im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
       <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.metadata?.explanation||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div>
       {!!tags.length&&<div className="tchips">{tags.map(t=><span key={t} className="tchip">{t}</span>)}</div>}</div>
+      {typeof doc.metadata?.relevance_score==='number'&&doc.metadata.relevance_score>0&&<span className="ds" style={{background:'#00d4aa18',color:'#00d4aa',borderColor:'#00d4aa'}}>{Math.round(doc.metadata.relevance_score*100)}% match</span>}
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}{doc.status==='processing'&&typeof doc.metadata?.progress==='number'?` ${doc.metadata.progress}%`:''}</span>
+      {onShare&&<button className="bi" title="Share public link" onClick={e=>{e.stopPropagation();onShare('document',doc.id)}}><Share2 size={13}/></button>}
       {onIdentify&&!!(doc.metadata?.explanation||doc.metadata?.caption)&&<button className="bi" title="AI: extract keywords as identity" onClick={e=>{e.stopPropagation();onIdentify(doc.id)}}><Wand2 size={13}/></button>}
       <button className="bi" title="Analyze" onClick={e=>{e.stopPropagation();analyze()}}><Sparkles size={13}/></button>
       {onEdit&&<button className="bi" title="Edit" onClick={e=>{e.stopPropagation();startEdit()}}><Pencil size={13}/></button>}
@@ -298,7 +399,7 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify}:{doc:Doc;
     </div>;
 }
 
-function FilesPage({docs,analyze,del,editDoc,moveDocs,renameF,identify}:{docs:Doc[];analyze:(id:string)=>void;del:(id:string)=>void;editDoc:(id:string,patch:any)=>void;moveDocs:(ids:string[],folder:string)=>void;renameF:(oldN:string,newN:string)=>void;identify:(id:string)=>void}) {
+function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,identify}:{docs:Doc[];refreshDocs?:()=>void;flash?:(msg:string)=>void;analyze:(id:string)=>void;del:(id:string)=>void;editDoc:(id:string,patch:any)=>void;moveDocs:(ids:string[],folder:string)=>void;renameF:(oldN:string,newN:string)=>void;identify:(id:string)=>void}) {
   const [q,sq]=useState(''),[folder,setFolder]=useState('');
   const [sel,ssel]=useState<string[]>([]);
   const [renaming,setRenaming]=useState(''),[rname,setRname]=useState('');
@@ -332,6 +433,7 @@ function FilesPage({docs,analyze,del,editDoc,moveDocs,renameF,identify}:{docs:Do
     <datalist id="dl-folders">{allNames.map(f=><option key={f} value={f}/>)}</datalist>
     <div className="br">
       <div className="sbx"><Search size={15}/><input placeholder="Search name, content, or identity..." value={q} onChange={e=>sq(e.target.value)}/></div>
+      {refreshDocs&&flash&&<UploadZone onUploaded={refreshDocs} flash={flash} folder={folder}/>}
       {folder&&<button className="btn sm" onClick={()=>{setFolder('');ssel([])}}>Back</button>}
       {sel.length>0&&<button className="btn sm" onClick={()=>{setMopen(!mopen);setMtarget(folder||'')}}><FolderInput size={13}/> Move ({sel.length})</button>}
       {sel.length>0&&<button className="btn sm" onClick={()=>{if(confirm(`Delete ${sel.length} file(s)?`)){sel.forEach(del);ssel([])}}}><Trash2 size={13}/> Delete ({sel.length})</button>}

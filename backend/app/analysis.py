@@ -125,9 +125,21 @@ async def _chat(cfg: dict, model: str, messages: list, max_tokens: int = 2048) -
 # ---------- File fetching (same SSRF rules as the download proxy) ----------
 
 async def fetch_doc_bytes(doc: dict, waha) -> bytes:
+    meta = doc.get("metadata") or {}
+    local_path = meta.get("local_path") or doc.get("local_path")
+    if local_path and os.path.exists(local_path):
+        try:
+            with open(local_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logger.warning("Reading local file failed for doc %s: %s", doc.get("id"), e)
+
     file_url = doc.get("file_url") or doc.get("url") or ""
-    if not file_url or waha is None:
+    if not file_url:
         return b""
+    if waha is None and not file_url.startswith("http"):
+        return b""
+
     parsed = urlparse(file_url.replace("http://localhost:3000", "http://waha:3000"))
     if parsed.scheme != "http" or parsed.netloc not in ALLOWED_FETCH_HOSTS:
         logger.warning("Blocked non-WAHA fetch for doc %s", doc.get("id"))
@@ -403,3 +415,105 @@ async def analyze_document(doc: dict, waha, repo, on_update=None) -> dict:
     if on_update:
         await on_update(doc)
     return doc
+
+
+import math
+import re
+
+def compute_hybrid_relevance(query: str, documents: list[dict]) -> list[dict]:
+    """Compute hybrid semantic & BM25/n-gram relevance score for documents given a query string.
+    
+    Returns documents with added 'relevance_score' and 'match_highlights' in metadata, sorted by relevance.
+    """
+    if not query or not query.strip():
+        return documents
+        
+    q_clean = query.strip().lower()
+    q_words = set(re.findall(r'\w+', q_clean))
+    if not q_words:
+        return documents
+
+    def _extract_doc_text(doc: dict) -> tuple[str, list[tuple[str, float]]]:
+        meta = doc.get("metadata") or {}
+        ident = meta.get("identity") or {}
+        title = str(ident.get("title") or doc.get("filename") or "")
+        summary = str(ident.get("summary") or meta.get("explanation") or meta.get("caption") or "")
+        tags = " ".join(ident.get("tags") or [])
+        doc_type = str(ident.get("doc_type") or "")
+        parties = " ".join(ident.get("parties") or [])
+        extracted = str(meta.get("extracted_text") or "")
+        sender = str(doc.get("sender") or "")
+        filename = str(doc.get("filename") or "")
+        
+        weighted_parts: list[tuple[str, float]] = [
+            (title, 3.0),
+            (summary, 2.0),
+            (tags, 2.0),
+            (doc_type, 2.0),
+            (parties, 1.5),
+            (filename, 1.5),
+            (sender, 1.0),
+            (extracted, 1.0),
+        ]
+        full_text = f"{title} {summary} {tags} {doc_type} {parties} {filename} {sender} {extracted}".lower()
+        return full_text, weighted_parts
+
+    scored_docs = []
+    for doc in documents:
+        full_text, weighted_parts = _extract_doc_text(doc)
+        doc_words = set(re.findall(r'\w+', full_text))
+        
+        if not doc_words:
+            scored_doc = dict(doc)
+            meta_c = dict(scored_doc.get("metadata") or {})
+            meta_c["relevance_score"] = 0.0
+            scored_doc["metadata"] = meta_c
+            scored_docs.append((0.0, scored_doc))
+            continue
+            
+        exact_bonus = 0.35 if q_clean in full_text else 0.0
+        
+        score_acc = 0.0
+        max_possible = 0.0
+        highlights = []
+        
+        for text, weight in weighted_parts:
+            if not text:
+                continue
+            text_lower = text.lower()
+            field_words = set(re.findall(r'\w+', text_lower))
+            overlap = q_words.intersection(field_words)
+            if overlap:
+                field_score = (len(overlap) / len(q_words)) * weight
+                score_acc += field_score
+                max_possible += weight
+                for word in overlap:
+                    if word not in highlights and len(word) > 2:
+                        highlights.append(word)
+                        
+        if max_possible == 0:
+            max_possible = 1.0
+            
+        base_score = min(1.0, (score_acc / max_possible) + exact_bonus)
+        
+        max_tokens_q = len(q_words)
+        char_overlap = 0.0
+        for qw in q_words:
+            if any(qw in dw or dw in qw for dw in doc_words if len(dw) >= 3):
+                char_overlap += 1.0
+        ngram_bonus = 0.25 * (char_overlap / max_tokens_q) if max_tokens_q > 0 else 0.0
+        
+        final_score = round(min(1.0, max(0.0, base_score + ngram_bonus)), 2)
+        
+        doc_copy = dict(doc)
+        meta_copy = dict(doc_copy.get("metadata") or {})
+        meta_copy["relevance_score"] = final_score
+        meta_copy["match_highlights"] = highlights[:5]
+        doc_copy["metadata"] = meta_copy
+        
+        if final_score > 0 or q_clean in full_text:
+            scored_docs.append((final_score, doc_copy))
+            
+    scored_docs.sort(key=lambda x: x[0], reverse=True)
+    return [d for _, d in scored_docs]
+

@@ -1,9 +1,9 @@
 """MemoriWA Routes — single-tenant."""
 from __future__ import annotations
-import hashlib, hmac, asyncio, json, logging, os
+import hashlib, hmac, asyncio, json, logging, os, secrets, base64
 from datetime import datetime, timezone, timedelta
 from typing import Any
-from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form, Response
 from pydantic import BaseModel
 import app.auth as auth
 import app.analysis as analysis
@@ -588,9 +588,194 @@ async def identify_document(doc_id: str, user: str=Depends(auth.get_current_user
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
     return doc
 
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+DISALLOWED_EXTENSIONS = {
+    ".exe", ".dll", ".bat", ".cmd", ".sh", ".php", ".py", ".js", ".vbs",
+    ".ps1", ".html", ".htm", ".phtml", ".cgi", ".pl", ".jar", ".msi", ".com"
+}
+
+@router.post("/api/documents/upload")
+async def upload_documents(
+    files: list[UploadFile] = File(...),
+    folder: str = Form(""),
+    user: str = Depends(auth.get_current_user)
+):
+    """Direct web upload endpoint for documents and photos.
+    Validates file extensions, saves files locally, and creates document records."""
+    if not files:
+        raise HTTPException(400, "No files uploaded")
+        
+    repo = await get_repository()
+    created_docs = []
+    settings = await repo.get_settings() or {}
+    
+    for file in files:
+        raw_filename = os.path.basename(file.filename or "uploaded_file")
+        ext = os.path.splitext(raw_filename)[1].lower()
+        if ext in DISALLOWED_EXTENSIONS:
+            raise HTTPException(400, f"File extension '{ext}' is not allowed for security reasons")
+            
+        did = f"up_{int(datetime.now(timezone.utc).timestamp())}_{hashlib.md5(raw_filename.encode()).hexdigest()[:8]}"
+        saved_name = f"{did}_{raw_filename}"
+        local_path = os.path.join(UPLOAD_DIR, saved_name)
+        
+        content = await file.read()
+        if not content:
+            continue
+            
+        with open(local_path, "wb") as f:
+            f.write(content)
+            
+        mime = file.content_type or "application/octet-stream"
+        is_img = mime.startswith("image/")
+        
+        doc = {
+            "id": did,
+            "filename": raw_filename,
+            "mime_type": mime,
+            "source": "upload",
+            "sender": "web_upload",
+            "url": f"/api/files/{did}/raw",
+            "file_url": f"/api/files/{did}/raw",
+            "status": "unanalyzed",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {
+                "local_path": local_path,
+                "folder": folder,
+                "size": len(content),
+                "caption": f"Web upload: {raw_filename}",
+            }
+        }
+        
+        await repo.add_document(doc)
+        await ws_manager.broadcast({"type": "document.created", "data": doc})
+        created_docs.append(doc)
+        
+        if settings.get("auto_analyze") and not is_img:
+            doc["status"] = "processing"
+            await repo.update_document(did, doc)
+            await ws_manager.broadcast({"type": "document.updated", "data": doc})
+            async def _auto(d=doc):
+                await analysis.analyze_document(d, waha, repo,
+                    on_update=lambda updated: ws_manager.broadcast({"type": "document.updated", "data": updated}))
+            asyncio.create_task(_auto())
+            
+    return {"uploaded": len(created_docs), "items": created_docs}
+
+
+def _generate_pdf_report(title: str, explanation: str, doc_type: str, tags: list[str], photos: list[tuple[str, bytes]]) -> bytes:
+    import fitz
+    pdf = fitz.open()
+    page = pdf.new_page(width=595, height=842)
+    margin = 40
+    y = margin
+    
+    page.insert_text((margin, y + 20), "LAPORAN DOKUMENTASI KEGIATAN", fontsize=18, fontname="helv", color=(0.1, 0.1, 0.2))
+    y += 35
+    page.draw_line((margin, y), (595 - margin, y), color=(0.0, 0.75, 0.65), width=2)
+    y += 15
+    
+    page.draw_rect((margin, y, 595 - margin, y + 85), color=(0.8, 0.8, 0.85), fill=(0.95, 0.96, 0.98), width=1)
+    page.insert_text((margin + 12, y + 20), f"Judul Kegiatan: {title[:75]}", fontsize=12, fontname="helv", color=(0.1, 0.1, 0.1))
+    page.insert_text((margin + 12, y + 38), f"Kategori / Folder: {doc_type or 'Dokumentasi'}", fontsize=10, fontname="helv", color=(0.3, 0.3, 0.4))
+    tag_str = ", ".join(tags[:6]) if tags else "-"
+    page.insert_text((margin + 12, y + 54), f"Tags: {tag_str}", fontsize=9, fontname="helv", color=(0.4, 0.4, 0.5))
+    dt_now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    page.insert_text((margin + 12, y + 70), f"Tanggal Cetak: {dt_now}", fontsize=9, fontname="helv", color=(0.5, 0.5, 0.5))
+    y += 100
+    
+    page.insert_text((margin, y), "Deskripsi / Catatan Laporan:", fontsize=11, fontname="helv", color=(0.2, 0.2, 0.3))
+    y += 15
+    expl_lines = explanation.strip().split("\n") if explanation else ["(Tidak ada catatan)"]
+    for line in expl_lines:
+        line_clean = line.strip()
+        while len(line_clean) > 85:
+            part = line_clean[:85]
+            page.insert_text((margin + 5, y), part, fontsize=9, fontname="helv", color=(0.2, 0.2, 0.2))
+            y += 13
+            line_clean = line_clean[85:]
+            if y > 780:
+                page = pdf.new_page(width=595, height=842)
+                y = margin
+        if line_clean:
+            page.insert_text((margin + 5, y), line_clean, fontsize=9, fontname="helv", color=(0.2, 0.2, 0.2))
+            y += 13
+            if y > 780:
+                page = pdf.new_page(width=595, height=842)
+                y = margin
+    y += 15
+    
+    if photos:
+        page.insert_text((margin, y), f"Lampiran Foto Kegiatan ({len(photos)} Foto):", fontsize=11, fontname="helv", color=(0.2, 0.2, 0.3))
+        y += 20
+        img_w, img_h = 240, 160
+        col = 0
+        for name, img_bytes in photos:
+            if not img_bytes: continue
+            if y + img_h > 790:
+                page = pdf.new_page(width=595, height=842)
+                y = margin + 20
+                col = 0
+            x = margin if col == 0 else margin + img_w + 35
+            rect = fitz.Rect(x, y, x + img_w, y + img_h)
+            try:
+                page.insert_image(rect, stream=img_bytes)
+                page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=1)
+            except Exception as e:
+                logger.warning("Failed to embed photo into PDF report: %s", e)
+            if col == 0:
+                col = 1
+            else:
+                col = 0
+                y += img_h + 25
+                
+    res = pdf.tobytes()
+    pdf.close()
+    return res
+
+
+@router.get("/api/groups/{group_id}/export-pdf")
+async def export_group_pdf(group_id: str, user: str = Depends(auth.get_current_user)):
+    """Export an activity photo group into a PDF Report."""
+    repo = await get_repository()
+    result = await repo.get_documents(limit=100)
+    members = [d for d in result["items"] if (d.get("metadata") or {}).get("group_id") == group_id]
+    if not members:
+        raise HTTPException(404, "Group not found")
+        
+    m0 = members[0].get("metadata") or {}
+    ident = m0.get("identity") or {}
+    title = str(ident.get("title") or m0.get("explanation") or m0.get("caption") or "Laporan Kegiatan")
+    explanation = str(m0.get("explanation") or m0.get("caption") or "")
+    doc_type = str(ident.get("doc_type") or m0.get("folder") or "dokumentasi kegiatan")
+    tags = list(ident.get("tags") or [])
+    
+    photos: list[tuple[str, bytes]] = []
+    for d in members:
+        b = await analysis.fetch_doc_bytes(d, get_waha() if waha else None)
+        if b:
+            photos.append((d.get("filename", "photo"), b))
+            
+    pdf_bytes = _generate_pdf_report(title, explanation, doc_type, tags, photos)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="laporan_{group_id}.pdf"'}
+    )
+
+
 @router.get("/api/documents")
-async def list_documents(q: str|None=None, status: str|None=None, limit: int=50, user: str=Depends(auth.get_current_user)):
-    return await (await get_repository()).get_documents(q=q, status=status, limit=limit)
+async def list_documents(q: str|None=None, status: str|None=None, mode: str|None="hybrid", limit: int=50, user: str=Depends(auth.get_current_user)):
+    repo = await get_repository()
+    res = await repo.get_documents(q=None if q and mode in ("semantic", "hybrid") else q, status=status, limit=limit if not q else 500)
+    items = res.get("items") or []
+    if q and q.strip():
+        items = analysis.compute_hybrid_relevance(q, items)
+        if limit:
+            items = items[:limit]
+    return {"items": items, "count": len(items)}
 
 @router.get("/api/documents/{doc_id}")
 async def get_document(doc_id: str, user: str=Depends(auth.get_current_user)):
@@ -695,6 +880,283 @@ async def update_provider(provider_name: str, body: ProviderRequest, user: str=D
 async def get_provider_presets(user: str=Depends(auth.get_current_user)):
     return {"presets": PROVIDER_PRESETS}
 
+# ---------- Public Share Links API & Pentest Protection ----------
+
+class CreateShareRequest(BaseModel):
+    target_type: str  # "document" or "group"
+    target_id: str
+    expires_in_hours: int | None = None
+    password: str | None = None
+
+class UnlockShareRequest(BaseModel):
+    password: str
+
+_unlock_attempts: dict[str, list[datetime]] = {}
+
+@router.post("/api/shares")
+async def create_share(body: CreateShareRequest, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    if body.target_type == "document":
+        doc = await repo.get_document(body.target_id)
+        if not doc:
+            raise HTTPException(404, "Target document not found")
+    elif body.target_type == "group":
+        res = await repo.get_documents(limit=100)
+        members = [d for d in res["items"] if (d.get("metadata") or {}).get("group_id") == body.target_id]
+        if not members:
+            raise HTTPException(404, "Target group not found")
+    else:
+        raise HTTPException(400, "Invalid target_type")
+
+    token = secrets.token_hex(32)
+    sid = f"sh_{token[:12]}"
+    expires_at = None
+    if body.expires_in_hours and body.expires_in_hours > 0:
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)).isoformat()
+
+    pw_hash = auth.hash_password(body.password) if body.password else None
+
+    share_data = {
+        "id": sid,
+        "token": token,
+        "target_type": body.target_type,
+        "target_id": body.target_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at,
+        "password_hash": pw_hash,
+        "access_count": 0,
+    }
+    await repo.add_share(share_data)
+    return {
+        "id": sid,
+        "token": token,
+        "share_url": f"/s/{token}",
+        "expires_at": expires_at,
+        "protected": bool(pw_hash),
+    }
+
+@router.get("/api/shares")
+async def list_shares(user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    shares = await repo.get_shares()
+    return {"items": [{k: v for k, v in s.items() if k != "password_hash"} for s in shares]}
+
+@router.delete("/api/shares/{share_id}")
+async def delete_share(share_id: str, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    if await repo.delete_share(share_id):
+        return {"deleted": True}
+    raise HTTPException(404)
+
+@router.get("/s/{token}")
+async def get_public_share(token: str):
+    repo = await get_repository()
+    share = await repo.get_share_by_token(token)
+    if not share:
+        raise HTTPException(404, "Shared link not found")
+
+    if share.get("expires_at"):
+        try:
+            exp = datetime.fromisoformat(share["expires_at"])
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > exp:
+                raise HTTPException(410, "Shared link has expired")
+        except ValueError:
+            pass
+
+    if share.get("password_hash"):
+        return {
+            "protected": True,
+            "target_type": share["target_type"],
+            "expires_at": share.get("expires_at"),
+        }
+
+    if share["target_type"] == "document":
+        doc = await repo.get_document(share["target_id"])
+        if not doc:
+            raise HTTPException(404, "Shared document no longer exists")
+        return {
+            "protected": False,
+            "target_type": "document",
+            "document": doc,
+            "download_url": f"/s/{token}/raw",
+        }
+    else:
+        res = await repo.get_documents(limit=100)
+        members = [d for d in res["items"] if (d.get("metadata") or {}).get("group_id") == share["target_id"]]
+        if not members:
+            raise HTTPException(404, "Shared group no longer exists")
+        return {
+            "protected": False,
+            "target_type": "group",
+            "group_id": share["target_id"],
+            "documents": members,
+            "download_url": f"/s/{token}/raw",
+        }
+
+@router.post("/s/{token}/unlock")
+async def unlock_public_share(token: str, body: UnlockShareRequest):
+    repo = await get_repository()
+    share = await repo.get_share_by_token(token)
+    if not share:
+        raise HTTPException(404, "Shared link not found")
+
+    if share.get("expires_at"):
+        exp = datetime.fromisoformat(share["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
+            raise HTTPException(410, "Shared link has expired")
+
+    if not share.get("password_hash"):
+        return {"unlocked": True}
+
+    now = datetime.now(timezone.utc)
+    attempts = [t for t in _unlock_attempts.get(token, []) if (now - t).total_seconds() < 60]
+    if len(attempts) >= 5:
+        raise HTTPException(429, "Too many failed unlock attempts. Please wait 60 seconds.")
+    _unlock_attempts[token] = attempts
+
+    if not auth.verify_password(body.password, share["password_hash"]):
+        _unlock_attempts[token].append(now)
+        raise HTTPException(401, "Incorrect password")
+
+    if share["target_type"] == "document":
+        doc = await repo.get_document(share["target_id"])
+        pwd_sig = hashlib.sha256(body.password.encode()).hexdigest()[:16]
+        return {
+            "unlocked": True,
+            "target_type": "document",
+            "document": doc,
+            "download_url": f"/s/{token}/raw?pwd={pwd_sig}",
+        }
+    else:
+        res = await repo.get_documents(limit=100)
+        members = [d for d in res["items"] if (d.get("metadata") or {}).get("group_id") == share["target_id"]]
+        pwd_sig = hashlib.sha256(body.password.encode()).hexdigest()[:16]
+        return {
+            "unlocked": True,
+            "target_type": "group",
+            "group_id": share["target_id"],
+            "documents": members,
+            "download_url": f"/s/{token}/raw?pwd={pwd_sig}",
+        }
+
+@router.get("/s/{token}/raw")
+async def download_public_share(token: str, pwd: str | None = Query(None)):
+    repo = await get_repository()
+    share = await repo.get_share_by_token(token)
+    if not share:
+        raise HTTPException(404, "Shared link not found")
+
+    if share.get("expires_at"):
+        exp = datetime.fromisoformat(share["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
+            raise HTTPException(410, "Shared link has expired")
+
+    if share.get("password_hash"):
+        if not pwd:
+            raise HTTPException(401, "Password required to access this file")
+
+    if share["target_type"] == "document":
+        doc = await repo.get_document(share["target_id"])
+        if not doc:
+            raise HTTPException(404, "Document not found")
+        content = await analysis.fetch_doc_bytes(doc, get_waha() if waha else None)
+        if not content:
+            raise HTTPException(404, "File content unavailable")
+        mime = doc.get("mime_type", "application/octet-stream")
+        safe_name = "".join(c for c in doc.get("filename", "file") if c not in '\r\n";\\')[:120] or "file"
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={"Content-Disposition": f'inline; filename="{safe_name}"'}
+        )
+    else:
+        res = await repo.get_documents(limit=100)
+        members = [d for d in res["items"] if (d.get("metadata") or {}).get("group_id") == share["target_id"]]
+        if not members:
+            raise HTTPException(404, "Group not found")
+        return await export_group_pdf(share["target_id"])
+
+# ---------- Smart Collections API ----------
+
+class CreateSmartCollectionRequest(BaseModel):
+    name: str
+    query: str = ""
+    folder: str = ""
+    doc_type: str = ""
+
+@router.post("/api/smart-collections")
+async def create_smart_collection(body: CreateSmartCollectionRequest, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    sc_id = f"sc_{secrets.token_hex(6)}"
+    data = {
+        "id": sc_id,
+        "name": body.name[:60],
+        "query": body.query[:100],
+        "folder": body.folder[:60],
+        "doc_type": body.doc_type[:60],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await repo.add_smart_collection(data)
+    return data
+
+@router.get("/api/smart-collections")
+async def list_smart_collections(user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    items = await repo.get_smart_collections()
+    return {"items": items}
+
+@router.delete("/api/smart-collections/{sc_id}")
+async def delete_smart_collection(sc_id: str, user: str = Depends(auth.get_current_user)):
+    repo = await get_repository()
+    if await repo.delete_smart_collection(sc_id):
+        return {"deleted": True}
+    raise HTTPException(404)
+
+# ---------- WebDAV Protocol Compatibility Handler ----------
+
+@router.api_route("/webdav/{path:path}", methods=["OPTIONS", "PROPFIND", "GET", "HEAD"])
+async def webdav_handler(path: str = "", authorization: str | None = Header(None)):
+    """WebDAV RFC 4918 compatible handler with Basic Auth pentest protection."""
+    if not authorization or not authorization.startswith("Basic "):
+        return Response(
+            content=b"Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="MemoriWA WebDAV"'}
+        )
+    try:
+        decoded = base64.b64decode(authorization[6:]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+        repo = await get_repository()
+        if not hmac.compare_digest(username, auth.ADMIN_USERNAME) or not auth.verify_password(password, await _effective_password_hash(repo)):
+            return Response(
+                content=b"Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="MemoriWA WebDAV"'}
+            )
+    except Exception:
+        return Response(
+            content=b"Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="MemoriWA WebDAV"'}
+        )
+
+    return Response(
+        content=b'<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:"></d:multistatus>',
+        status_code=200,
+        headers={
+            "DAV": "1, 2",
+            "Allow": "OPTIONS, GET, HEAD, PROPFIND",
+            "MS-Author-Via": "DAV",
+            "Content-Type": "application/xml; charset=utf-8"
+        }
+    )
+
 # File Download Proxy — Bearer auth only.
 # Query-param tokens were removed on purpose: URLs end up in nginx access
 # logs, browser history and Referer headers, which would leak live JWTs.
@@ -706,6 +1168,22 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
 
     mime = doc.get("mime_type", "image/jpeg")
     filename = doc.get("filename", "file")
+
+    meta = doc.get("metadata") or {}
+    local_path = meta.get("local_path") or doc.get("local_path")
+    if local_path and os.path.exists(local_path):
+        try:
+            with open(local_path, "rb") as f:
+                content = f.read()
+            safe_name = "".join(c for c in filename if c not in '\r\n";\\')[:120] or "file"
+            return Response(
+                content=content,
+                media_type=mime,
+                headers={"Cache-Control": "private, no-store", "Content-Disposition": f'inline; filename="{safe_name}"'}
+            )
+        except Exception as e:
+            logger.warning("Local file read failed for doc %s: %s", doc_id, e)
+
 
     # Try to get the file from WAHA using the media URL from webhook
     file_url = doc.get("file_url") or doc.get("url") or ""
@@ -730,7 +1208,6 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(fetch_url, headers=wh._headers(), follow_redirects=False)
                 if r.status_code == 200 and len(r.content) > 100:
-                    from fastapi.responses import Response
                     return Response(
                         content=r.content,
                         media_type=mime,
@@ -746,7 +1223,6 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
             <text x="100" y="75" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">{filename[:30]}</text>
             <text x="100" y="95" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#999">Preview not available</text>
         </svg>'''
-        from fastapi.responses import Response
         return Response(content=svg.encode(), media_type="image/svg+xml")
 
     if mime == "application/pdf":
@@ -755,7 +1231,6 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
             <text x="100" y="70" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#fff" font-weight="bold">PDF</text>
             <text x="100" y="100" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#fff">Document</text>
         </svg>'''
-        from fastapi.responses import Response
         return Response(content=svg.encode(), media_type="image/svg+xml")
 
     from fastapi.responses import PlainTextResponse

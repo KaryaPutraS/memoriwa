@@ -35,6 +35,20 @@ class Repository(ABC):
     async def remove_waha_session(self, name: str) -> None: ...
     @abstractmethod
     async def get_waha_sessions(self) -> list[dict]: ...
+    @abstractmethod
+    async def add_share(self, data: dict) -> dict: ...
+    @abstractmethod
+    async def get_shares(self) -> list[dict]: ...
+    @abstractmethod
+    async def get_share_by_token(self, token: str) -> dict | None: ...
+    @abstractmethod
+    async def delete_share(self, share_id: str) -> bool: ...
+    @abstractmethod
+    async def add_smart_collection(self, data: dict) -> dict: ...
+    @abstractmethod
+    async def get_smart_collections(self) -> list[dict]: ...
+    @abstractmethod
+    async def delete_smart_collection(self, sc_id: str) -> bool: ...
 
 class MemoryRepository(Repository):
     """In-memory store, optionally mirrored to a JSON file (DATA_FILE env)
@@ -45,6 +59,8 @@ class MemoryRepository(Repository):
         self.providers: dict[str, dict] = {}
         self.settings: dict[str, Any] = {}
         self.waha_sessions: dict[str, dict] = {}
+        self.shares: dict[str, dict] = {}
+        self.smart_collections: dict[str, dict] = {}
         self.lock = asyncio.Lock()
         self._path = os.getenv("DATA_FILE", "")
         if self._path:
@@ -56,6 +72,8 @@ class MemoryRepository(Repository):
                 self.providers = st.get("providers", {})
                 self.settings = st.get("settings", {})
                 self.waha_sessions = st.get("waha_sessions", {})
+                self.shares = st.get("shares", {})
+                self.smart_collections = st.get("smart_collections", {})
             except Exception:
                 # Missing or corrupt state file must never block startup.
                 pass
@@ -66,7 +84,8 @@ class MemoryRepository(Repository):
         tmp = self._path + ".tmp"
         data = {"docs": self.docs, "events": sorted(self.events),
                 "providers": self.providers, "settings": self.settings,
-                "waha_sessions": self.waha_sessions}
+                "waha_sessions": self.waha_sessions, "shares": self.shares,
+                "smart_collections": self.smart_collections}
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
@@ -147,6 +166,44 @@ class MemoryRepository(Repository):
 
     async def get_waha_sessions(self) -> list[dict]:
         return list(self.waha_sessions.values())
+
+    async def add_share(self, data: dict) -> dict:
+        async with self.lock:
+            self.shares[data["id"]] = data
+            self._persist()
+            return data
+
+    async def get_shares(self) -> list[dict]:
+        return list(self.shares.values())
+
+    async def get_share_by_token(self, token: str) -> dict | None:
+        for s in self.shares.values():
+            if s.get("token") == token:
+                return s
+        return None
+
+    async def delete_share(self, share_id: str) -> bool:
+        async with self.lock:
+            found = self.shares.pop(share_id, None) is not None
+            if found:
+                self._persist()
+            return found
+
+    async def add_smart_collection(self, data: dict) -> dict:
+        async with self.lock:
+            self.smart_collections[data["id"]] = data
+            self._persist()
+            return data
+
+    async def get_smart_collections(self) -> list[dict]:
+        return list(self.smart_collections.values())
+
+    async def delete_smart_collection(self, sc_id: str) -> bool:
+        async with self.lock:
+            found = self.smart_collections.pop(sc_id, None) is not None
+            if found:
+                self._persist()
+            return found
 
 _repo: Repository | None = None
 _lock = asyncio.Lock()

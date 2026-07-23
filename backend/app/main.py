@@ -20,6 +20,7 @@ _login_max: int = 5
 _login_buckets: dict[str, list[float]] = defaultdict(list)
 _login_lock = asyncio.Lock()
 _max_body_bytes: int = int(os.getenv("MAX_BODY_SIZE_BYTES", str(5 * 1024 * 1024)))
+_upload_max_body_bytes: int = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(50 * 1024 * 1024)))
 
 async def _rate_limit_middleware(request: Request, call_next):
     env = (os.getenv("ENV", "production") or "production").lower()
@@ -27,11 +28,19 @@ async def _rate_limit_middleware(request: Request, call_next):
         return await call_next(request)
     key = request.client.host if request.client else "unknown"
     now = time.monotonic()
-    if request.url.path == "/webhook/waha" and request.method == "POST":
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > _max_body_bytes:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            cl = int(content_length)
+            if request.url.path == "/webhook/waha" and request.method == "POST" and cl > _max_body_bytes:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "Request body too large"}, status_code=413)
+            if request.url.path == "/api/documents/upload" and request.method == "POST" and cl > _upload_max_body_bytes:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "Upload size exceeds limit"}, status_code=413)
+        except ValueError:
             from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "Request body too large"}, status_code=413)
+            return JSONResponse({"detail": "Invalid content length header"}, status_code=400)
     if request.url.path == "/api/auth/login" and request.method == "POST":
         async with _login_lock:
             bucket = _login_buckets[key]

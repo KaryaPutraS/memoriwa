@@ -22,7 +22,40 @@ export async function login(username: string, password: string) {
 
 export function logout() { localStorage.removeItem('memoriwa_token'); }
 export async function changePassword(current_password: string, new_password: string) { return request('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password, new_password }) }); }
-export async function getDocuments() { return request('/api/documents?limit=50'); }
+export async function getDocuments(q?: string, mode?: string) {
+  const params = new URLSearchParams();
+  params.set('limit', '100');
+  if (q) params.set('q', q);
+  if (mode) params.set('mode', mode);
+  return request(`/api/documents?${params.toString()}`);
+}
+export async function uploadDocuments(files: File[], folder?: string) {
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  if (folder) fd.append('folder', folder);
+  const t = getToken();
+  const headers: Record<string, string> = {};
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const res = await fetch(BASE + '/api/documents/upload', { method: 'POST', headers, body: fd });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+export async function downloadGroupPdf(gid: string) {
+  const t = getToken();
+  const res = await fetch(BASE + `/api/groups/${encodeURIComponent(gid)}/export-pdf`, {
+    headers: { Authorization: `Bearer ${t || ''}` }
+  });
+  if (!res.ok) throw new Error('Export PDF failed');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `laporan_${gid}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 export async function analyzeDocument(id: string) { return request(`/api/analysis/run/${id}`, { method: 'POST' }); }
 export async function deleteDocument(id: string) { return request(`/api/documents/${id}`, { method: 'DELETE' }); }
 export async function verifyDocuments(ids: string[], folder: string) { return request('/api/documents/verify', { method: 'POST', body: JSON.stringify({ ids, folder }) }); }
@@ -33,6 +66,18 @@ export async function renameFolder(oldName: string, newName: string) { return re
 export async function deleteGroup(gid: string) { return request(`/api/documents/group/${encodeURIComponent(gid)}`, { method: 'DELETE' }); }
 export async function identifyDocument(id: string) { return request(`/api/documents/${encodeURIComponent(id)}/identify`, { method: 'POST' }); }
 export async function identifyGroup(gid: string) { return request(`/api/documents/group/${encodeURIComponent(gid)}/identify`, { method: 'POST' }); }
+
+export async function createShare(target_type: string, target_id: string, expires_in_hours?: number, password?: string) {
+  return request('/api/shares', { method: 'POST', body: JSON.stringify({ target_type, target_id, expires_in_hours, password }) });
+}
+export async function getShares() { return request('/api/shares'); }
+export async function deleteShare(id: string) { return request(`/api/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+
+export async function createSmartCollection(name: string, query?: string, folder?: string, doc_type?: string) {
+  return request('/api/smart-collections', { method: 'POST', body: JSON.stringify({ name, query, folder, doc_type }) });
+}
+export async function getSmartCollections() { return request('/api/smart-collections'); }
+export async function deleteSmartCollection(id: string) { return request(`/api/smart-collections/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
 
 export async function getSettings() { return request('/api/settings'); }
 export async function saveSettings(data: any) { return request('/api/settings', { method: 'PUT', body: JSON.stringify(data) }); }
