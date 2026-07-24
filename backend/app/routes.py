@@ -631,7 +631,11 @@ async def identify_document(doc_id: str, user: str=Depends(auth.get_current_user
     await ws_manager.broadcast({"type": "document.updated", "data": doc})
     return doc
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
+# Use the same persistent volume as DATA_FILE for uploads.
+# In Docker: DATA_FILE=/data/state.json → uploads go to /data/uploads/
+# Locally (no DATA_FILE): uploads go to ./data/uploads/ relative to backend/
+_data_dir = os.path.dirname(os.getenv("DATA_FILE", "")) if os.getenv("DATA_FILE") else ""
+UPLOAD_DIR = os.path.join(_data_dir, "uploads") if _data_dir else os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DISALLOWED_EXTENSIONS = {
