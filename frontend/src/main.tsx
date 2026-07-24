@@ -482,11 +482,10 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
         </div>
         {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
         {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
-        {im&&<div className="pm pm-img"><img src={pv||directRawUrl} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).src=directRawUrl}}/></div>}
-        {pd&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv||directRawUrl} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
+        {im&&<div className="pm pm-img"><img src={pv||directRawUrl} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
+        {(pd||isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
         {isVid&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv||directRawUrl} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
         {isAud&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv||directRawUrl} controls style={{width:'100%'}}/></div>}
-        {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
         {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}
       </div>
       <div className="pa">
@@ -513,6 +512,7 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
 
 function DocCard({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void;onShare?:(type:string,id:string)=>void}) {
   const [o,so]=useState(false);
+  const [imgErr,setImgErr]=useState(false);
   const mime=(doc.mime_type||'').toLowerCase();
   const fname=(doc.filename||'').toLowerCase();
   const im=mime.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif|svg)$/i.test(fname);
@@ -532,7 +532,7 @@ function DocCard({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}</span>
     </div>
     <div className="fc-preview" onClick={()=>so(!o)}>
-      {im&&(pv||directRawUrl)?<img src={pv||directRawUrl} alt="" className="fc-thumb" onError={e=>{(e.target as HTMLImageElement).src=directRawUrl}}/>:isPpt?<div className="fc-icon-pptx">P</div>:isDocx?<div className="fc-icon-docx">W</div>:isXlsx?<div className="fc-icon-xlsx">X</div>:pd?<FileIcon size={32} color="#ea580c"/>:<FileText size={32} color="#94a3b8"/>}
+      {im&&!imgErr&&(pv||directRawUrl)?<img src={pv||directRawUrl} alt="" className="fc-thumb" onError={()=>setImgErr(true)}/>:isPpt?<div className="fc-icon-pptx">P</div>:isDocx?<div className="fc-icon-docx">W</div>:isXlsx?<div className="fc-icon-xlsx">X</div>:pd?<FileIcon size={32} color="#ea580c"/>:im?<Image size={32} color="#00d4aa"/>:<FileText size={32} color="#94a3b8"/>}
     </div>
     <div className="fc-title" onClick={()=>so(!o)}>{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div>
     <div className="fc-sub" onClick={()=>so(!o)}>{doc.sender}</div>

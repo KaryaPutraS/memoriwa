@@ -1283,36 +1283,8 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
             except Exception:
                 pass
 
-    # Fallback: if file bytes unavailable, generate readable fallback PDF or SVG
-    extracted_text = meta.get("extracted_text") or meta.get("explanation") or meta.get("caption") or ""
-    if mime == "application/pdf":
-        try:
-            import fitz
-            doc_pdf = fitz.open()
-            page = doc_pdf.new_page(width=595, height=842)
-            rect = fitz.Rect(40, 40, 555, 800)
-            heading = f"MEMORIWA DOKUMEN: {filename}\nPengirim: {doc.get('sender','-')}\nStatus: {doc.get('status','')}\n"
-            divider = "-" * 55 + "\n\n"
-            body_text = extracted_text if extracted_text else "Dokumen PDF telah diterima dan diarsipkan."
-            page.insert_textbox(rect, heading + divider + body_text, fontsize=11, fontname="helv")
-            pdf_bytes = doc_pdf.tobytes()
-            doc_pdf.close()
-            return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'})
-        except Exception as e:
-            logger.warning("Fallback PDF generation failed: %s", e)
-
-    if mime.startswith("image/"):
-        title_text = "".join(c for c in filename[:30] if ord(c) < 128) or "Foto"
-        sub_text = "".join(c for c in (extracted_text[:40] + "...") if ord(c) < 128) if extracted_text else "Pratinjau Foto"
-        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" style="background:#13131f">
-            <rect width="400" height="300" fill="#181824" stroke="#c8f31d" stroke-width="3" rx="16"/>
-            <text x="200" y="130" text-anchor="middle" font-family="sans-serif" font-size="16" font-weight="bold" fill="#c8f31d">{title_text}</text>
-            <text x="200" y="165" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#aaa">{sub_text}</text>
-        </svg>'''
-        return Response(content=svg.encode(), media_type="image/svg+xml")
-
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(f"Dokumen: {filename}\nPengirim: {doc.get('sender','')}\n\n{extracted_text or 'Ringkasan belum tersedia.'}")
+    # If file bytes are not available locally or via WAHA, raise 404 so frontend can handle clean icon fallbacks
+    raise HTTPException(404, detail="File bytes not available")
 
 @router.get("/api/files/{doc_id}/view")
 async def view_document_html(doc_id: str, repo: repo_mod.Repository = Depends(get_repository), user: str = Depends(auth.get_current_user)):
