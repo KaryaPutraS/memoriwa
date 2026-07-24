@@ -386,6 +386,9 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
   const pd=mime==='application/pdf'||fname.endsWith('.pdf');
   const isVid=mime.startsWith('video/')||/\.(mp4|webm|mov|mkv)$/i.test(fname);
   const isAud=mime.startsWith('audio/')||/\.(mp3|wav|ogg|m4a)$/i.test(fname);
+  const isPpt=mime.includes('presentationml')||/\.(pptx|ppt)$/i.test(fname);
+  const isDocx=mime.includes('wordprocessingml')||/\.(docx|doc)$/i.test(fname);
+  const isXlsx=mime.includes('spreadsheetml')||/\.(xlsx|xls|csv)$/i.test(fname);
   const pv=useAuthFileUrl(doc.id, im||pd||isVid||isAud||o);
   const cl=SC[doc.status]||'#999';
   const tags:string[]=(doc.metadata?.identity?.tags||[]).slice(0,3);
@@ -409,12 +412,86 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
       <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
       {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
       {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
-      {doc.metadata?.extracted_text&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Extracted Content:</span>{doc.metadata.extracted_text.slice(0,800)}{doc.metadata.extracted_text.length>800?'…':''}</div></div>}
       {im&&pv&&<div className="pm pm-img"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
       {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
       {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
       {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
-      {!im&&!pd&&!isVid&&!isAud&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
+      {isPpt && (
+        <div className="pm pm-pptx" style={{width:'100%',background:'#fff',border:'2px solid #ea580c',borderRadius:10,padding:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+            <div style={{width:34,height:34,borderRadius:8,background:'#ea580c',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>P</div>
+            <div>
+              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+              <div style={{fontSize:11,color:'#ea580c',fontWeight:700}}>PowerPoint Presentation</div>
+            </div>
+          </div>
+          {doc.metadata?.extracted_text ? (
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Slide Content Extracted</div>
+              <div style={{maxHeight:240,overflowY:'auto',background:'#fff7ed',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#431407',border:'1.5px solid #ffedd5',lineHeight:1.5}}>
+                {doc.metadata.extracted_text}
+              </div>
+            </div>
+          ) : (
+            <div style={{textAlign:'center',padding:'16px 10px',background:'#fff7ed',borderRadius:8,border:'1px dashed #fdba74'}}>
+              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#ea580c'}}/>
+              <b style={{fontSize:13,color:'#9a3412'}}>Slide text ready to analyze</b>
+              <p style={{fontSize:11,color:'#c2410c',marginTop:2}}>Click "Analyze" to extract presentation slides into clean searchable text.</p>
+            </div>
+          )}
+        </div>
+      )}
+      {isDocx && (
+        <div className="pm pm-docx" style={{width:'100%',background:'#fff',border:'2px solid #2563eb',borderRadius:10,padding:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+            <div style={{width:34,height:34,borderRadius:8,background:'#2563eb',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>W</div>
+            <div>
+              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+              <div style={{fontSize:11,color:'#2563eb',fontWeight:700}}>Word Document</div>
+            </div>
+          </div>
+          {doc.metadata?.extracted_text ? (
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Document Content</div>
+              <div style={{maxHeight:240,overflowY:'auto',background:'#eff6ff',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#1e3a8a',border:'1.5px solid #dbeafe',lineHeight:1.5}}>
+                {doc.metadata.extracted_text}
+              </div>
+            </div>
+          ) : (
+            <div style={{textAlign:'center',padding:'16px 10px',background:'#eff6ff',borderRadius:8,border:'1px dashed #93c5fd'}}>
+              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#2563eb'}}/>
+              <b style={{fontSize:13,color:'#1e40af'}}>Document content ready to analyze</b>
+              <p style={{fontSize:11,color:'#1d4ed8',marginTop:2}}>Click "Analyze" to extract document paragraphs & text.</p>
+            </div>
+          )}
+        </div>
+      )}
+      {isXlsx && (
+        <div className="pm pm-xlsx" style={{width:'100%',background:'#fff',border:'2px solid #16a34a',borderRadius:10,padding:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+            <div style={{width:34,height:34,borderRadius:8,background:'#16a34a',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>X</div>
+            <div>
+              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+              <div style={{fontSize:11,color:'#16a34a',fontWeight:700}}>Excel Spreadsheet</div>
+            </div>
+          </div>
+          {doc.metadata?.extracted_text ? (
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Spreadsheet Data Extracted</div>
+              <div style={{maxHeight:240,overflowY:'auto',background:'#f0fdf4',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#14532d',border:'1.5px solid #dcfce7',lineHeight:1.5}}>
+                {doc.metadata.extracted_text}
+              </div>
+            </div>
+          ) : (
+            <div style={{textAlign:'center',padding:'16px 10px',background:'#f0fdf4',borderRadius:8,border:'1px dashed #86efac'}}>
+              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#16a34a'}}/>
+              <b style={{fontSize:13,color:'#15803d'}}>Spreadsheet data ready to analyze</b>
+              <p style={{fontSize:11,color:'#166534',marginTop:2}}>Click "Analyze" to extract spreadsheet cells & tables.</p>
+            </div>
+          )}
+        </div>
+      )}
+      {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
       <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" download={doc.filename} onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open / Download</a></div></div>
     }
     {editing&&onEdit&&<div className="dp"><div className="p4 s3">
