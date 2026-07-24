@@ -1203,6 +1203,7 @@ async def webdav_handler(path: str = "", authorization: str | None = Header(None
 async def download_and_save_waha_media(doc: dict, waha_inst, repo) -> str:
     """Download media file bytes from WAHA and save permanently to local disk storage."""
     meta = dict(doc.get("metadata") or {})
+    local_path = meta.get("local_path") or doc.get("local_path")
     if local_path and os.path.exists(local_path):
         if not meta.get("size"):
             try:
