@@ -1301,6 +1301,123 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse(f"Dokumen: {filename}\nPengirim: {doc.get('sender','')}\n\n{extracted_text or 'Ringkasan belum tersedia.'}")
 
+@router.get("/files/{doc_id}/view")
+async def view_document_html(doc_id: str, repo: repo_mod.Repository = Depends(get_repository)):
+    """Render a dedicated interactive HTML Document & Presentation Slide Viewer."""
+    import html
+    doc = await repo.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    filename = doc.get("filename") or "Document"
+    mime = (doc.get("mime_type") or "").lower()
+    meta = doc.get("metadata") or {}
+    
+    local_path = meta.get("local_path") or doc.get("local_path")
+    file_bytes = b""
+    if local_path and os.path.exists(local_path):
+        try:
+            with open(local_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception:
+            pass
+    if not file_bytes:
+        wh = get_waha() if waha else None
+        if wh:
+            from app.analysis import fetch_doc_bytes
+            file_bytes = await fetch_doc_bytes(doc, wh)
+            
+    extracted = meta.get("extracted_text") or ""
+    if not extracted and file_bytes:
+        from app.analysis import office_text
+        extracted = office_text(file_bytes, mime, filename)
+        if extracted:
+            meta["extracted_text"] = extracted
+            doc["metadata"] = meta
+            await repo.update_document(doc_id, doc)
+            
+    if not extracted:
+        extracted = meta.get("explanation") or meta.get("caption") or "Konten dokumen belum diekstraksi. Klik Analyze di dashboard."
+        
+    sender = doc.get("sender") or "-"
+    created = doc.get("created_at") or ""
+    
+    fname_lower = filename.lower()
+    is_pptx = "presentationml" in mime or fname_lower.endswith(".pptx") or fname_lower.endswith(".ppt")
+    is_docx = "wordprocessingml" in mime or fname_lower.endswith(".docx") or fname_lower.endswith(".doc")
+    is_xlsx = "spreadsheetml" in mime or fname_lower.endswith(".xlsx") or fname_lower.endswith(".xls") or fname_lower.endswith(".csv")
+    
+    if is_pptx:
+        parts = [p.strip() for p in extracted.split("\n\n") if p.strip()]
+        if not parts:
+            parts = [extracted]
+        cards = []
+        for idx, slide_text in enumerate(parts, 1):
+            cards.append(f'''
+            <div class="slide-card">
+              <div class="slide-badge">SLIDE {idx} / {len(parts)}</div>
+              <div class="slide-body">{html.escape(slide_text)}</div>
+            </div>
+            ''')
+        body_html = "\n".join(cards)
+    else:
+        body_html = f'''
+        <div class="doc-card">
+          <div class="doc-body">{html.escape(extracted)}</div>
+        </div>
+        '''
+        
+    theme_color = "#ea580c" if is_pptx else ("#2563eb" if is_docx else ("#16a34a" if is_xlsx else "#00d4aa"))
+    type_label = "PowerPoint Presentation" if is_pptx else ("Word Document" if is_docx else ("Excel Spreadsheet" if is_xlsx else "Dokumen"))
+    badge_char = "P" if is_pptx else ("W" if is_docx else ("X" if is_xlsx else "D"))
+    
+    html_content = f'''<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pratinjau: {html.escape(filename)}</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 16px; min-height: 100vh; }}
+    .container {{ max-width: 800px; margin: 0 auto; }}
+    .hdr {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; border-bottom: 2px solid {theme_color}; padding-bottom: 12px; flex-wrap: wrap; }}
+    .hdr-left {{ display: flex; align-items: center; gap: 12px; }}
+    .hdr-icon {{ width: 42px; height: 42px; border-radius: 10px; background: {theme_color}; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }}
+    .hdr-title {{ font-size: 16px; font-weight: bold; color: #fff; }}
+    .hdr-sub {{ font-size: 12px; color: {theme_color}; font-weight: bold; }}
+    .btn-dl {{ background: {theme_color}; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: bold; display: inline-flex; align-items: center; gap: 6px; }}
+    .btn-dl:hover {{ opacity: 0.9; }}
+    .slide-card {{ background: #1e293b; border: 1.5px solid #334155; border-left: 5px solid {theme_color}; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }}
+    .slide-badge {{ display: inline-block; background: {theme_color}; color: #fff; padding: 3px 8px; border-radius: 6px; font-weight: 800; font-size: 11px; margin-bottom: 10px; letter-spacing: 0.5px; }}
+    .slide-body {{ font-size: 14px; line-height: 1.6; color: #e2e8f0; white-space: pre-wrap; }}
+    .doc-card {{ background: #1e293b; border: 1.5px solid #334155; border-radius: 12px; padding: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }}
+    .doc-body {{ font-size: 14px; line-height: 1.6; color: #e2e8f0; white-space: pre-wrap; }}
+    .meta-bar {{ font-size: 11px; color: #94a3b8; margin-bottom: 16px; display: flex; gap: 16px; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hdr">
+      <div class="hdr-left">
+        <div class="hdr-icon">{badge_char}</div>
+        <div>
+          <div class="hdr-title">{html.escape(filename)}</div>
+          <div class="hdr-sub">{type_label}</div>
+        </div>
+      </div>
+      <a href="/api/files/{doc_id}/raw" download="{html.escape(filename)}" class="btn-dl">⬇ Download File Asli</a>
+    </div>
+    <div class="meta-bar">
+      <span>Pengirim: {html.escape(sender)}</span>
+      <span>Waktu: {html.escape(str(created)[:16])}</span>
+    </div>
+    {body_html}
+  </div>
+</body>
+</html>'''
+    return HTMLResponse(content=html_content)
+
 # WebSocket
 @router.websocket("/ws")
 async def ws_endpoint(socket: WebSocket):

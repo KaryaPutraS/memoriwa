@@ -48,3 +48,12 @@ def test_plain_text_and_csv_extraction():
     assert method == "plain-text"
     assert "Daftar Inventaris" not in text
     assert "Laptop,5,Baik" in text
+
+def test_view_document_html_endpoint():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    client = TestClient(app)
+    
+    # Unauthenticated / files view is accessible
+    res = client.get("/api/files/nonexistent/view")
+    assert res.status_code == 404
