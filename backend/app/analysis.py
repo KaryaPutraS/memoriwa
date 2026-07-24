@@ -140,14 +140,16 @@ async def fetch_doc_bytes(doc: dict, waha) -> bytes:
     if waha is None and not file_url.startswith("http"):
         return b""
 
-    parsed = urlparse(file_url.replace("http://localhost:3000", "http://waha:3000"))
+    url_str = file_url.replace("http://localhost:3000", "http://waha:3000").replace("http://127.0.0.1:3000", "http://waha:3000")
+    parsed = urlparse(url_str)
     if parsed.scheme != "http" or parsed.netloc not in ALLOWED_FETCH_HOSTS:
         logger.warning("Blocked non-WAHA fetch for doc %s", doc.get("id"))
         return b""
     try:
+        headers = waha._headers() if (waha and hasattr(waha, "_headers")) else {}
         async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get(parsed.geturl(), headers=waha._headers(), follow_redirects=False)
-            if r.status_code == 200 and len(r.content) > 100:
+            r = await client.get(parsed.geturl(), headers=headers, follow_redirects=False)
+            if r.status_code == 200 and len(r.content) > 0:
                 return r.content
     except Exception as e:
         logger.warning("Fetch failed for doc %s: %s", doc.get("id"), e)

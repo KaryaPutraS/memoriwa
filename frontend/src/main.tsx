@@ -305,11 +305,12 @@ function M({n,l,c}:{n:number;l:string;c:string}) { return <div className="mt"><s
 // another group card to move it there (photo was grouped wrong).
 function GroupThumb({doc,on,flip,gid}:{doc:Doc;on:boolean;flip:()=>void;gid:string}) {
   const url=useAuthFileUrl(doc.id,true);
+  const [imgErr, setImgErr]=useState(false);
   return <div className={`gthumb ${on?'':'off'}`} onClick={flip} title={doc.filename}
     draggable
     onDragStart={e=>{e.dataTransfer.setData('application/x-mw-doc',JSON.stringify({id:doc.id,gid}));e.dataTransfer.effectAllowed='move';e.stopPropagation()}}>
     <input type="checkbox" checked={on} onChange={flip} onClick={e=>e.stopPropagation()}/>
-    {url?<img src={url} alt={doc.filename} draggable={false}/>:<div className="gph"><Image size={18}/></div>}
+    {url&&!imgErr?<img src={url} alt={doc.filename} draggable={false} onError={()=>setImgErr(true)}/>:<div className="gph"><Image size={20} color="#666"/></div>}
   </div>;
 }
 
