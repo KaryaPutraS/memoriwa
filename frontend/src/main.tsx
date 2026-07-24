@@ -479,12 +479,12 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
       {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
       {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
       {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
-      {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(localStorage.getItem('token')||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
+      {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
       {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
       <div className="pa">
         <button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button>
-        <a className="btn sm" href={`/api/files/${doc.id}/view?token=${encodeURIComponent(localStorage.getItem('token')||'')}`} target="_blank" rel="noopener"><Share2 size={12}/> Open Preview</a>
-        <a className="btn sm" href={pv||`/api/files/${doc.id}/raw?token=${encodeURIComponent(localStorage.getItem('token')||'')}`} target="_blank" rel="noopener" download={doc.filename}><FolderInput size={12}/> Download File</a>
+        <a className="btn sm" href={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener"><Share2 size={12}/> Open Preview</a>
+        <a className="btn sm" href={pv||`/api/files/${doc.id}/raw?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener" download={doc.filename}><FolderInput size={12}/> Download File</a>
       </div></div>
     }
     {editing&&onEdit&&<div className="dp"><div className="p4 s3">
