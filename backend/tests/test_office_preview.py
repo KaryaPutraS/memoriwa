@@ -52,8 +52,14 @@ def test_plain_text_and_csv_extraction():
 def test_view_document_html_endpoint():
     from fastapi.testclient import TestClient
     from app.main import app
+    import app.auth as auth
     client = TestClient(app)
     
-    # Unauthenticated / files view is accessible
+    # Missing token returns 401
     res = client.get("/api/files/nonexistent/view")
-    assert res.status_code == 404
+    assert res.status_code == 401
+    
+    # Valid token returns 404 for nonexistent document
+    token = auth.create_token()
+    res2 = client.get(f"/api/files/nonexistent/view?token={token}")
+    assert res2.status_code == 404

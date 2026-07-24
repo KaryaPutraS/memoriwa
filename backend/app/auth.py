@@ -90,11 +90,21 @@ def create_token(sub: str = 'admin') -> str:
     )
 
 
-async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    if not creds:
+from fastapi import Query
+
+async def get_current_user(
+    creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    token: str | None = Query(None),
+):
+    jwt_str = ""
+    if creds and creds.credentials:
+        jwt_str = creds.credentials
+    elif token:
+        jwt_str = token
+    if not jwt_str:
         raise HTTPException(401, 'Authentication required')
     try:
-        return jwt.decode(creds.credentials, JWT_SECRET, algorithms=[ALGO])['sub']
+        return jwt.decode(jwt_str, JWT_SECRET, algorithms=[ALGO])['sub']
     except JWTError:
         raise HTTPException(401, 'Invalid or expired token')
 

@@ -1302,7 +1302,7 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
     return PlainTextResponse(f"Dokumen: {filename}\nPengirim: {doc.get('sender','')}\n\n{extracted_text or 'Ringkasan belum tersedia.'}")
 
 @router.get("/api/files/{doc_id}/view")
-async def view_document_html(doc_id: str, repo: repo_mod.Repository = Depends(get_repository)):
+async def view_document_html(doc_id: str, repo: repo_mod.Repository = Depends(get_repository), user: str = Depends(auth.get_current_user)):
     """Render a dedicated interactive HTML Document & Presentation Slide Viewer."""
     import html
     doc = await repo.get_document(doc_id)
