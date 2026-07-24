@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput, Wand2 } from 'lucide-react';
+import { BarChart3, Check, ChevronRight, FileText, Folder, Home, Menu, Pencil, QrCode, Search, Settings, Sparkles, Trash2, Zap, Image, FileIcon, RotateCw, Play, Square, LogOut, Share2, Plus, FolderInput, Wand2, LayoutGrid, List } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { login, logout, getToken, setToken, getDocuments, startWaha, stopWaha, logoutWaha, getWahaStatus, getWahaQr, getWahaHealth, getProviders, createProvider, deleteProvider, updateProvider, getSettings, saveSettings, analyzeDocument, deleteDocument, verifyDocuments, updateGroup, updateDocument, moveDocuments, renameFolder, deleteGroup, identifyDocument, identifyGroup, changePassword, uploadDocuments, downloadGroupPdf, createShare, getShares, deleteShare, createSmartCollection, getSmartCollections, deleteSmartCollection } from './api';
 import './styles.css';
@@ -10,19 +10,42 @@ type Prov = { name:string; kind:string; model:string; api_key:string; base_url?:
 const SC: Record<string,string> = { unanalyzed:'#999', processing:'#f59e0b', analyzed:'#00d4aa', failed:'#f2504b' };
 const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || '';
 
-// Fetch a protected file with the Bearer token and expose it as a local blob
-// URL — keeps JWTs out of URLs, access logs and browser history.
+// Persistent Blob URL Cache so switching tabs or leaving page never breaks previews!
+const blobUrlCache = new Map<string, string>();
+const blobFetching = new Map<string, Promise<string>>();
+
+function fetchAuthBlobUrl(id: string): Promise<string> {
+  if (blobUrlCache.has(id)) return Promise.resolve(blobUrlCache.get(id)!);
+  if (blobFetching.has(id)) return blobFetching.get(id)!;
+  const p = fetch(API_URL + '/api/files/' + id + '/raw', {
+    headers: { Authorization: 'Bearer ' + (getToken() || '') }
+  })
+    .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+    .then(b => {
+      const obj = URL.createObjectURL(b);
+      blobUrlCache.set(id, obj);
+      blobFetching.delete(id);
+      return obj;
+    })
+    .catch(err => {
+      blobFetching.delete(id);
+      throw err;
+    });
+  blobFetching.set(id, p);
+  return p;
+}
+
 function useAuthFileUrl(id: string, enabled: boolean): string {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState<string>(() => (enabled && id && blobUrlCache.get(id)) || '');
+
   useEffect(() => {
-    if (!enabled) { setUrl(''); return; }
-    let obj = '', dead = false;
-    fetch(API_URL + '/api/files/' + id + '/raw', { headers: { Authorization: 'Bearer ' + (getToken() || '') } })
-      .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
-      .then(b => { if (!dead) { obj = URL.createObjectURL(b); setUrl(obj); } })
-      .catch(() => {});
-    return () => { dead = true; if (obj) URL.revokeObjectURL(obj); };
+    if (!enabled || !id) return;
+    if (blobUrlCache.has(id)) { setUrl(blobUrlCache.get(id)!); return; }
+    let active = true;
+    fetchAuthBlobUrl(id).then(u => { if (active) setUrl(u); }).catch(() => {});
+    return () => { active = false; };
   }, [id, enabled]);
+
   return url;
 }
 
@@ -410,13 +433,12 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
   const [sel,ssel]=useState<string[]>([]);
   const [renaming,setRenaming]=useState(''),[rname,setRname]=useState('');
   const [mopen,setMopen]=useState(false),[mtarget,setMtarget]=useState('');
+  const [folderView, setFolderView] = useState<'grid'|'list'>('grid');
   const toggle=(id:string)=>ssel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
-  // Folder name comes from the analysis result: a specific doc_type wins;
-  // generic/empty types fall back to the first AI tag before 'Uncategorized'.
   const GENERIC=['','other','unknown','uncategorized','document','dokumen','file','general','lainnya','misc'];
   const folderOf=(d:Doc)=>{
     const mf=(d.metadata?.folder||'').trim();
-    if(mf)return mf;  // manually assigned folder wins
+    if(mf)return mf;
     const t=(d.metadata?.identity?.doc_type||'').trim();
     if(t&&!GENERIC.includes(t.toLowerCase()))return t;
     const tag=(d.metadata?.identity?.tags||[])[0];
@@ -448,18 +470,51 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
       <div className="fi"><label>Move {sel.length} file(s) to folder</label><input className="inp" list="dl-folders" value={mtarget} onChange={e=>setMtarget(e.target.value)} placeholder="Folder name (new or existing)"/></div>
       <div className="fl g2"><button className="btn pr" disabled={!mtarget.trim()} onClick={()=>{moveDocs(sel,mtarget.trim());ssel([]);setMopen(false)}}><Check size={12}/> Move</button><button className="btn sm" onClick={()=>setMopen(false)}>Cancel</button></div>
     </div></div>}
-    {!folder&&!ql&&<div className="cd"><div className="cd-hd"><b>Folders ({folders.length})</b></div>
+    {!folder&&!ql&&<div className="cd">
+      <div className="cd-hd">
+        <b>Folders ({folders.length})</b>
+        <div className="cs" style={{gap:4}}>
+          <button className={`ch ${folderView==='grid'?'on':''}`} onClick={()=>setFolderView('grid')} title="Grid View (Kotak)"><LayoutGrid size={13}/> Grid</button>
+          <button className={`ch ${folderView==='list'?'on':''}`} onClick={()=>setFolderView('list')} title="List View (Kebawah)"><List size={13}/> List</button>
+        </div>
+      </div>
       {folders.length===0?<div className="em"><Folder size={32}/><b>No folders yet</b><p>Analyze files in Inbox — folders are created automatically from the detected document type.</p></div>
-      :folders.map(([f,n])=><div key={f} className="fr" style={{cursor:'pointer'}} onClick={()=>setFolder(f)}>
-        <Folder size={15}/>
-        {renaming===f
-          ?<span className="f1" onClick={e=>e.stopPropagation()}><input className="inp" value={rname} onChange={e=>setRname(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doRename(f);if(e.key==='Escape')setRenaming('')}} autoFocus/></span>
-          :<span className="f1">{f}</span>}
-        <span className="mu xs">{n} file{n>1?'s':''}</span>
-        {renaming===f
-          ?<><button className="bi" title="Save name" onClick={e=>{e.stopPropagation();doRename(f)}}><Check size={13}/></button><button className="bi" title="Cancel" onClick={e=>{e.stopPropagation();setRenaming('')}}><RotateCw size={12}/></button></>
-          :<button className="bi" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>}
-        <ChevronRight size={13}/></div>)}
+      :folderView==='grid'?(
+        <div className="fgrid">
+          {folders.map(([f,n])=>(
+            <div key={f} className="fcard" onClick={()=>setFolder(f)}>
+              <div className="fc-ic"><Folder size={22}/></div>
+              <div className="fc-main">
+                {renaming===f?(
+                  <input className="inp" value={rname} onChange={e=>setRname(e.target.value)} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Enter')doRename(f);if(e.key==='Escape')setRenaming('')}} autoFocus/>
+                ):(
+                  <div className="fc-name">{f}</div>
+                )}
+                <div className="fc-sub">{n} file{n>1?'s':''}</div>
+              </div>
+              {renaming===f?(
+                <div className="fc-act">
+                  <button className="bi" title="Save" onClick={e=>{e.stopPropagation();doRename(f)}}><Check size={13}/></button>
+                  <button className="bi" title="Cancel" onClick={e=>{e.stopPropagation();setRenaming('')}}><RotateCw size={12}/></button>
+                </div>
+              ):(
+                <button className="bi fc-edit" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>
+              )}
+            </div>
+          ))}
+        </div>
+      ):(
+        folders.map(([f,n])=><div key={f} className="fr" style={{cursor:'pointer'}} onClick={()=>setFolder(f)}>
+          <Folder size={15}/>
+          {renaming===f
+            ?<span className="f1" onClick={e=>e.stopPropagation()}><input className="inp" value={rname} onChange={e=>setRname(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doRename(f);if(e.key==='Escape')setRenaming('')}} autoFocus/></span>
+            :<span className="f1">{f}</span>}
+          <span className="mu xs">{n} file{n>1?'s':''}</span>
+          {renaming===f
+            ?<><button className="bi" title="Save name" onClick={e=>{e.stopPropagation();doRename(f)}}><Check size={13}/></button><button className="bi" title="Cancel" onClick={e=>{e.stopPropagation();setRenaming('')}}><RotateCw size={12}/></button></>
+            :<button className="bi" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>}
+          <ChevronRight size={13}/></div>)
+      )}
     </div>}
     {(folder||ql)&&<div className="cd"><div className="cd-hd"><b>{folder||'Search results'} ({list.length})</b>
       {list.length>0&&<button className="btn sm" onClick={()=>{const ids=list.map(d=>d.id);ssel(sel.length===ids.length?[]:ids)}}>{sel.length===list.length?'Unselect all':'Select all'}</button>}

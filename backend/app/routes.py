@@ -269,6 +269,8 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     }
     await repo.add_document(doc)
     await ws_manager.broadcast({"type": "document.created", "data": doc})
+    if waha:
+        asyncio.create_task(download_and_save_waha_media(doc, waha, repo))
 
     # A caption carried by a photo doubles as the explanation for the whole
     # burst — group this photo with the recent ungrouped images of the same
@@ -1197,9 +1199,36 @@ async def webdav_handler(path: str = "", authorization: str | None = Header(None
         }
     )
 
+async def download_and_save_waha_media(doc: dict, waha_inst, repo) -> str:
+    """Download media file bytes from WAHA and save permanently to local disk storage."""
+    meta = dict(doc.get("metadata") or {})
+    local_path = meta.get("local_path") or doc.get("local_path")
+    if local_path and os.path.exists(local_path):
+        return local_path
+
+    from app.analysis import fetch_doc_bytes
+    data = await fetch_doc_bytes(doc, waha_inst)
+    if not data:
+        return ""
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    safe_did = "".join(c for c in doc["id"] if c.isalnum() or c in "-_")
+    safe_fname = "".join(c for c in doc.get("filename", "file") if c.isalnum() or c in ".-_")[:60] or "file"
+    file_path = os.path.join(UPLOAD_DIR, f"{safe_did}_{safe_fname}")
+    try:
+        with open(file_path, "wb") as f:
+            f.write(data)
+        meta["local_path"] = file_path
+        doc["metadata"] = meta
+        doc["local_path"] = file_path
+        await repo.update_document(doc["id"], doc)
+        logger.info("Saved local media file for doc %s -> %s (%d bytes)", doc["id"], file_path, len(data))
+        return file_path
+    except Exception as e:
+        logger.warning("Failed saving local media file for doc %s: %s", doc["id"], e)
+        return ""
+
 # File Download Proxy — Bearer auth only.
-# Query-param tokens were removed on purpose: URLs end up in nginx access
-# logs, browser history and Referer headers, which would leak live JWTs.
 @router.get("/api/files/{doc_id}/raw")
 async def download_file(doc_id: str, user: str = Depends(auth.get_current_user)):
     repo = await get_repository()
@@ -1224,57 +1253,53 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
         except Exception as e:
             logger.warning("Local file read failed for doc %s: %s", doc_id, e)
 
-
-    # Try to get the file from WAHA using the media URL from webhook
-    file_url = doc.get("file_url") or doc.get("url") or ""
+    # If local_path missing, try to fetch from WAHA and save to local_path immediately
     wh = get_waha() if waha else None
+    if wh:
+        saved_path = await download_and_save_waha_media(doc, wh, repo)
+        if saved_path and os.path.exists(saved_path):
+            try:
+                with open(saved_path, "rb") as f:
+                    content = f.read()
+                safe_name = "".join(c for c in filename if c not in '\r\n";\\')[:120] or "file"
+                return Response(
+                    content=content,
+                    media_type=mime,
+                    headers={"Cache-Control": "private, no-store", "Content-Disposition": f'inline; filename="{safe_name}"'}
+                )
+            except Exception:
+                pass
 
-    # SSRF guard: the media URL comes from webhook payloads, so only ever
-    # fetch from the WAHA service itself — never arbitrary hosts.
-    from urllib.parse import urlparse
-    allowed_hosts = {"localhost:3000", "127.0.0.1:3000", "waha:3000"}
-    fetch_url = ""
-    if file_url:
-        parsed = urlparse(file_url.replace("http://localhost:3000", "http://waha:3000"))
-        if parsed.scheme == "http" and parsed.netloc in allowed_hosts:
-            fetch_url = parsed.geturl()
-        else:
-            logger.warning("Blocked non-WAHA media URL for doc %s: %s", doc_id, file_url[:120])
-
-    if wh and fetch_url:
-        try:
-            import httpx
-            safe_name = "".join(c for c in filename if c not in '\r\n";\\')[:120] or "file"
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.get(fetch_url, headers=wh._headers(), follow_redirects=False)
-                if r.status_code == 200 and len(r.content) > 0:
-                    return Response(
-                        content=r.content,
-                        media_type=mime,
-                        headers={"Cache-Control": "private, no-store", "Content-Disposition": f'inline; filename="{safe_name}"'}
-                    )
-        except Exception:
-            pass
-
-    # Fallback: return a placeholder SVG for images, or plain info for docs
-    if mime.startswith("image/"):
-        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" style="background:#f0f0f0;border:2px solid #111">
-            <rect width="200" height="150" fill="#eee" stroke="#111" stroke-width="2"/>
-            <text x="100" y="75" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">{filename[:30]}</text>
-            <text x="100" y="95" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#999">Preview not available</text>
-        </svg>'''
-        return Response(content=svg.encode(), media_type="image/svg+xml")
-
+    # Fallback: if file bytes unavailable, generate readable fallback PDF or SVG
+    extracted_text = meta.get("extracted_text") or meta.get("explanation") or meta.get("caption") or ""
     if mime == "application/pdf":
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150">
-            <rect width="200" height="150" fill="#f2504b" stroke="#111" stroke-width="2"/>
-            <text x="100" y="70" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#fff" font-weight="bold">PDF</text>
-            <text x="100" y="100" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#fff">Document</text>
+        try:
+            import fitz
+            doc_pdf = fitz.open()
+            page = doc_pdf.new_page(width=595, height=842)
+            rect = fitz.Rect(40, 40, 555, 800)
+            heading = f"MEMORIWA DOKUMEN: {filename}\nPengirim: {doc.get('sender','-')}\nStatus: {doc.get('status','')}\n"
+            divider = "-" * 55 + "\n\n"
+            body_text = extracted_text if extracted_text else "Dokumen PDF telah diterima dan diarsipkan."
+            page.insert_textbox(rect, heading + divider + body_text, fontsize=11, fontname="helv")
+            pdf_bytes = doc_pdf.tobytes()
+            doc_pdf.close()
+            return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'})
+        except Exception as e:
+            logger.warning("Fallback PDF generation failed: %s", e)
+
+    if mime.startswith("image/"):
+        title_text = "".join(c for c in filename[:30] if ord(c) < 128) or "Foto"
+        sub_text = "".join(c for c in (extracted_text[:40] + "...") if ord(c) < 128) if extracted_text else "Pratinjau Foto"
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" style="background:#13131f">
+            <rect width="400" height="300" fill="#181824" stroke="#c8f31d" stroke-width="3" rx="16"/>
+            <text x="200" y="130" text-anchor="middle" font-family="sans-serif" font-size="16" font-weight="bold" fill="#c8f31d">{title_text}</text>
+            <text x="200" y="165" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#aaa">{sub_text}</text>
         </svg>'''
         return Response(content=svg.encode(), media_type="image/svg+xml")
 
     from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(f"File: {filename}\nType: {mime}\nPreview not available for this type.")
+    return PlainTextResponse(f"Dokumen: {filename}\nPengirim: {doc.get('sender','')}\n\n{extracted_text or 'Ringkasan belum tersedia.'}")
 
 # WebSocket
 @router.websocket("/ws")
