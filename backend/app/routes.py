@@ -1247,7 +1247,7 @@ async def download_file(doc_id: str, user: str = Depends(auth.get_current_user))
             safe_name = "".join(c for c in filename if c not in '\r\n";\\')[:120] or "file"
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(fetch_url, headers=wh._headers(), follow_redirects=False)
-                if r.status_code == 200 and len(r.content) > 100:
+                if r.status_code == 200 and len(r.content) > 0:
                     return Response(
                         content=r.content,
                         media_type=mime,

@@ -356,9 +356,13 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
   const [editing,setEditing]=useState(false);
   const [etitle,setEtitle]=useState('');
   const [efolder,setEfolder]=useState('');
-  const im=doc.mime_type?.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif)$/i.test(doc.filename||'');
-  const pd=doc.mime_type==='application/pdf';
-  const pv=useAuthFileUrl(doc.id, im||o);
+  const mime=(doc.mime_type||'').toLowerCase();
+  const fname=(doc.filename||'').toLowerCase();
+  const im=mime.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif|svg)$/i.test(fname);
+  const pd=mime==='application/pdf'||fname.endsWith('.pdf');
+  const isVid=mime.startsWith('video/')||/\.(mp4|webm|mov|mkv)$/i.test(fname);
+  const isAud=mime.startsWith('audio/')||/\.(mp3|wav|ogg|m4a)$/i.test(fname);
+  const pv=useAuthFileUrl(doc.id, im||pd||isVid||isAud||o);
   const cl=SC[doc.status]||'#999';
   const tags:string[]=(doc.metadata?.identity?.tags||[]).slice(0,3);
   const startEdit=()=>{setEtitle(doc.metadata?.identity?.title||doc.filename||'');setEfolder(doc.metadata?.folder||'');setEditing(true);so(true)};
@@ -381,11 +385,13 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
       <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
       {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
       {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
-      {!im&&doc.metadata?.extracted_text&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Preview:</span>{doc.metadata.extracted_text.slice(0,400)}{doc.metadata.extracted_text.length>400?'…':''}</div></div>}
+      {doc.metadata?.extracted_text&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Extracted Content:</span>{doc.metadata.extracted_text.slice(0,800)}{doc.metadata.extracted_text.length>800?'…':''}</div></div>}
       {im&&pv&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
-      {pd&&<div className="pm pf"><FileIcon size={32}/><b>PDF</b><span>Document</span></div>}
-      {!im&&!pd&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
-      <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open</a></div></div>
+      {pd&&pv&&<div className="pm" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'380px',border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
+      {isVid&&pv&&<div className="pm" style={{width:'100%'}}><video src={pv} controls style={{maxWidth:'100%',maxHeight:360,borderRadius:8}}/></div>}
+      {isAud&&pv&&<div className="pm" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%',marginTop:8}}/></div>}
+      {!im&&!pd&&!isVid&&!isAud&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
+      <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" download={doc.filename} onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open / Download</a></div></div>
     }
     {editing&&onEdit&&<div className="dp"><div className="p4 s3">
       <div className="fi"><label>Title</label><input className="inp" value={etitle} onChange={e=>setEtitle(e.target.value)}/></div>
