@@ -453,13 +453,17 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
   const isDocx=mime.includes('wordprocessingml')||/\.(docx|doc)$/i.test(fname);
   const isXlsx=mime.includes('spreadsheetml')||/\.(xlsx|xls|csv)$/i.test(fname);
   const pv=useAuthFileUrl(doc.id, im||pd||isVid||isAud||o);
+  const directRawUrl = `/api/files/${doc.id}/raw?token=${encodeURIComponent(getToken() || '')}`;
   const cl=SC[doc.status]||'#999';
   const tags:string[]=(doc.metadata?.identity?.tags||[]).slice(0,3);
+  const fileSize = doc.metadata?.size || (doc as any).size || 0;
+  const sizeText = fileSize > 1048576 ? (fileSize / 1048576).toFixed(1) + ' MB' : fileSize > 0 ? (fileSize / 1024).toFixed(1) + ' KB' : '-';
   const startEdit=()=>{setEtitle(doc.metadata?.identity?.title||doc.filename||'');setEfolder(doc.metadata?.folder||'');setEditing(true);so(true)};
+
   return <div className="dw">
     <div className="dr" onClick={()=>so(!o)}>
       <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
-      <div className="di">{im&&pv?<img src={pv} className="tt" alt=""/>:im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
+      <div className="di">{im&&(pv||directRawUrl)?<img src={pv||directRawUrl} className="tt" alt="" onError={e=>{(e.target as HTMLImageElement).src=directRawUrl}}/>:im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
       <div className="dn">
         <div className="dnm">{doc.metadata?.identity?.title||doc.metadata?.explanation||doc.filename||'Untitled'}</div>
         <div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div>
@@ -474,14 +478,14 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
         <div className="dp-info"><b>{doc.filename}</b>
           <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div>
           <div className="ir"><span>From:</span>{doc.sender}</div>
-          <div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div>
+          <div className="ir"><span>Size:</span>{sizeText}</div>
         </div>
         {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
         {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
-        {im&&pv&&<div className="pm pm-img"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
-        {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
-        {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
-        {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
+        {im&&<div className="pm pm-img"><img src={pv||directRawUrl} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).src=directRawUrl}}/></div>}
+        {pd&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv||directRawUrl} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
+        {isVid&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv||directRawUrl} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
+        {isAud&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv||directRawUrl} controls style={{width:'100%'}}/></div>}
         {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
         {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}
       </div>
@@ -491,7 +495,7 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
         {onIdentify&&!!(doc.metadata?.explanation||doc.metadata?.caption)&&<button className="btn sm" onClick={()=>onIdentify(doc.id)}><Wand2 size={12}/> AI Identify</button>}
         {onShare&&<button className="btn sm" onClick={()=>onShare('document',doc.id)}><Share2 size={12}/> Share</button>}
         <a className="btn sm" href={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener"><Share2 size={12}/> Open Preview</a>
-        <a className="btn sm" href={pv||`/api/files/${doc.id}/raw?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener" download={doc.filename}><FolderInput size={12}/> Download File</a>
+        <a className="btn sm" href={pv||directRawUrl} target="_blank" rel="noopener" download={doc.filename}><FolderInput size={12}/> Download File</a>
         {del&&<button className="btn sm" style={{color:'#f2504b',borderColor:'#f2504b'}} onClick={del}><Trash2 size={12}/> Delete</button>}
       </div>
     </div>}
@@ -519,6 +523,7 @@ function DocCard({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:
   const isDocx=mime.includes('wordprocessingml')||/\.(docx|doc)$/i.test(fname);
   const isXlsx=mime.includes('spreadsheetml')||/\.(xlsx|xls|csv)$/i.test(fname);
   const pv=useAuthFileUrl(doc.id, im||pd||isVid||isAud||o);
+  const directRawUrl = `/api/files/${doc.id}/raw?token=${encodeURIComponent(getToken() || '')}`;
   const cl=SC[doc.status]||'#999';
 
   return <div className="fcard-doc">
@@ -527,7 +532,7 @@ function DocCard({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}</span>
     </div>
     <div className="fc-preview" onClick={()=>so(!o)}>
-      {im&&pv?<img src={pv} alt="" className="fc-thumb"/>:isPpt?<div className="fc-icon-pptx">P</div>:isDocx?<div className="fc-icon-docx">W</div>:isXlsx?<div className="fc-icon-xlsx">X</div>:pd?<FileIcon size={32} color="#ea580c"/>:<FileText size={32} color="#94a3b8"/>}
+      {im&&(pv||directRawUrl)?<img src={pv||directRawUrl} alt="" className="fc-thumb" onError={e=>{(e.target as HTMLImageElement).src=directRawUrl}}/>:isPpt?<div className="fc-icon-pptx">P</div>:isDocx?<div className="fc-icon-docx">W</div>:isXlsx?<div className="fc-icon-xlsx">X</div>:pd?<FileIcon size={32} color="#ea580c"/>:<FileText size={32} color="#94a3b8"/>}
     </div>
     <div className="fc-title" onClick={()=>so(!o)}>{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div>
     <div className="fc-sub" onClick={()=>so(!o)}>{doc.sender}</div>
@@ -566,6 +571,32 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
   const list=(folder?analyzed.filter(d=>folderOf(d)===folder):docs).filter(match);
   const allNames=folders.map(([f])=>f);
   const doRename=(oldN:string)=>{const nn=rname.trim();if(nn&&nn!==oldN)renameF(oldN,nn);setRenaming('');if(folder===oldN)setFolder(nn||oldN)};
+  
+  const selectFolder = (f: string) => {
+    setFolder(f);
+    ssel([]);
+    try { window.history.pushState({ folder: f }, ''); } catch {}
+  };
+
+  const deleteFolder = (f: string) => {
+    const docsInFolder = docs.filter(d => folderOf(d) === f);
+    if (confirm(`Hapus folder "${f}" beserta ${docsInFolder.length} file di dalamnya?`)) {
+      docsInFolder.forEach(d => del(d.id));
+      if (folder === f) setFolder('');
+    }
+  };
+
+  useEffect(() => {
+    const onPopState = (e: PopStateEvent) => {
+      if (folder) {
+        setFolder('');
+        ssel([]);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [folder]);
+
   return <div className="pg">
     <div className="mx"><M n={analyzed.length} l="Analyzed" c="#00d4aa"/><M n={folders.length} l="Folders" c="#c8f31d"/><M n={docs.filter(d=>d.status==='unanalyzed').length} l="Pending" c="#999"/></div>
     <datalist id="dl-folders">{allNames.map(f=><option key={f} value={f}/>)}</datalist>
@@ -592,7 +623,7 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
       :folderView==='grid'?(
         <div className="fgrid">
           {folders.map(([f,n])=>(
-            <div key={f} className="fcard" onClick={()=>setFolder(f)}>
+            <div key={f} className="fcard" onClick={()=>selectFolder(f)}>
               <div className="fc-ic"><Folder size={22}/></div>
               <div className="fc-main">
                 {renaming===f?(
@@ -608,13 +639,16 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
                   <button className="bi" title="Cancel" onClick={e=>{e.stopPropagation();setRenaming('')}}><RotateCw size={12}/></button>
                 </div>
               ):(
-                <button className="bi fc-edit" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>
+                <div className="fc-act">
+                  <button className="bi fc-edit" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>
+                  <button className="bi fc-edit" title="Delete folder" style={{color:'#f2504b'}} onClick={e=>{e.stopPropagation();deleteFolder(f)}}><Trash2 size={13}/></button>
+                </div>
               )}
             </div>
           ))}
         </div>
       ):(
-        folders.map(([f,n])=><div key={f} className="fr" style={{cursor:'pointer'}} onClick={()=>setFolder(f)}>
+        folders.map(([f,n])=><div key={f} className="fr" style={{cursor:'pointer'}} onClick={()=>selectFolder(f)}>
           <Folder size={15}/>
           {renaming===f
             ?<span className="f1" onClick={e=>e.stopPropagation()}><input className="inp" value={rname} onChange={e=>setRname(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doRename(f);if(e.key==='Escape')setRenaming('')}} autoFocus/></span>
@@ -622,7 +656,7 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
           <span className="mu xs">{n} file{n>1?'s':''}</span>
           {renaming===f
             ?<><button className="bi" title="Save name" onClick={e=>{e.stopPropagation();doRename(f)}}><Check size={13}/></button><button className="bi" title="Cancel" onClick={e=>{e.stopPropagation();setRenaming('')}}><RotateCw size={12}/></button></>
-            :<button className="bi" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button>}
+            :<><button className="bi" title="Rename folder" onClick={e=>{e.stopPropagation();setRenaming(f);setRname(f)}}><Pencil size={13}/></button><button className="bi" title="Delete folder" style={{color:'#f2504b'}} onClick={e=>{e.stopPropagation();deleteFolder(f)}}><Trash2 size={13}/></button></>}
           <ChevronRight size={13}/></div>)
       )}
     </div>}

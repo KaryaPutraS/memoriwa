@@ -1203,8 +1203,14 @@ async def webdav_handler(path: str = "", authorization: str | None = Header(None
 async def download_and_save_waha_media(doc: dict, waha_inst, repo) -> str:
     """Download media file bytes from WAHA and save permanently to local disk storage."""
     meta = dict(doc.get("metadata") or {})
-    local_path = meta.get("local_path") or doc.get("local_path")
     if local_path and os.path.exists(local_path):
+        if not meta.get("size"):
+            try:
+                meta["size"] = os.path.getsize(local_path)
+                doc["metadata"] = meta
+                await repo.update_document(doc["id"], doc)
+            except Exception:
+                pass
         return local_path
 
     from app.analysis import fetch_doc_bytes
@@ -1220,6 +1226,7 @@ async def download_and_save_waha_media(doc: dict, waha_inst, repo) -> str:
         with open(file_path, "wb") as f:
             f.write(data)
         meta["local_path"] = file_path
+        meta["size"] = len(data)
         doc["metadata"] = meta
         doc["local_path"] = file_path
         await repo.update_document(doc["id"], doc)
@@ -1328,17 +1335,12 @@ async def view_document_html(doc_id: str, repo: repo_mod.Repository = Depends(ge
             from app.analysis import fetch_doc_bytes
             file_bytes = await fetch_doc_bytes(doc, wh)
             
-    extracted = meta.get("extracted_text") or ""
-    if not extracted and file_bytes:
+    extracted = ""
+    if file_bytes:
         from app.analysis import office_text
         extracted = office_text(file_bytes, mime, filename)
-        if extracted:
-            meta["extracted_text"] = extracted
-            doc["metadata"] = meta
-            await repo.update_document(doc_id, doc)
-            
     if not extracted:
-        extracted = meta.get("explanation") or meta.get("caption") or "Konten dokumen belum diekstraksi. Klik Analyze di dashboard."
+        extracted = meta.get("extracted_text") or meta.get("explanation") or meta.get("caption") or "Konten dokumen belum diekstraksi. Klik Analyze di dashboard."
         
     sender = doc.get("sender") or "-"
     created = doc.get("created_at") or ""
