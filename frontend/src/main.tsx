@@ -375,6 +375,75 @@ function GroupCard({gid,docs,onVerify,onSave,onDeleteSelected,onDeleteGroup,onRe
   </div>;
 }
 
+function PptPreview({doc}:{doc:Doc}) {
+  const text=doc.metadata?.extracted_text;
+  return <div className="pm pm-pptx" style={{width:'100%',background:'#fff',border:'2px solid #ea580c',borderRadius:10,padding:16}}>
+    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+      <div style={{width:34,height:34,borderRadius:8,background:'#ea580c',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>P</div>
+      <div>
+        <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+        <div style={{fontSize:11,color:'#ea580c',fontWeight:700}}>PowerPoint Presentation</div>
+      </div>
+    </div>
+    {text?<div>
+        <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Slide Content Extracted</div>
+        <div style={{maxHeight:240,overflowY:'auto',background:'#fff7ed',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#431407',border:'1.5px solid #ffedd5',lineHeight:1.5}}>
+          {text}
+        </div>
+      </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#fff7ed',borderRadius:8,border:'1px dashed #fdba74'}}>
+        <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#ea580c'}}/>
+        <b style={{fontSize:13,color:'#9a3412'}}>Slide text ready to analyze</b>
+        <p style={{fontSize:11,color:'#c2410c',marginTop:2}}>Click Analyze to extract presentation slides into clean searchable text.</p>
+      </div>}
+  </div>;
+}
+
+function DocxPreview({doc}:{doc:Doc}) {
+  const text=doc.metadata?.extracted_text;
+  return <div className="pm pm-docx" style={{width:'100%',background:'#fff',border:'2px solid #2563eb',borderRadius:10,padding:16}}>
+    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+      <div style={{width:34,height:34,borderRadius:8,background:'#2563eb',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>W</div>
+      <div>
+        <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+        <div style={{fontSize:11,color:'#2563eb',fontWeight:700}}>Word Document</div>
+      </div>
+    </div>
+    {text?<div>
+        <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Document Content</div>
+        <div style={{maxHeight:240,overflowY:'auto',background:'#eff6ff',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#1e3a8a',border:'1.5px solid #dbeafe',lineHeight:1.5}}>
+          {text}
+        </div>
+      </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#eff6ff',borderRadius:8,border:'1px dashed #93c5fd'}}>
+        <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#2563eb'}}/>
+        <b style={{fontSize:13,color:'#1e40af'}}>Document content ready to analyze</b>
+        <p style={{fontSize:11,color:'#1d4ed8',marginTop:2}}>Click Analyze to extract document paragraphs & text.</p>
+      </div>}
+  </div>;
+}
+
+function XlsxPreview({doc}:{doc:Doc}) {
+  const text=doc.metadata?.extracted_text;
+  return <div className="pm pm-xlsx" style={{width:'100%',background:'#fff',border:'2px solid #16a34a',borderRadius:10,padding:16}}>
+    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
+      <div style={{width:34,height:34,borderRadius:8,background:'#16a34a',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>X</div>
+      <div>
+        <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
+        <div style={{fontSize:11,color:'#16a34a',fontWeight:700}}>Excel Spreadsheet</div>
+      </div>
+    </div>
+    {text?<div>
+        <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Spreadsheet Data Extracted</div>
+        <div style={{maxHeight:240,overflowY:'auto',background:'#f0fdf4',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#14532d',border:'1.5px solid #dcfce7',lineHeight:1.5}}>
+          {text}
+        </div>
+      </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#f0fdf4',borderRadius:8,border:'1px dashed #86efac'}}>
+        <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#16a34a'}}/>
+        <b style={{fontSize:13,color:'#15803d'}}>Spreadsheet data ready to analyze</b>
+        <p style={{fontSize:11,color:'#166534',marginTop:2}}>Click Analyze to extract spreadsheet cells & tables.</p>
+      </div>}
+  </div>;
+}
+
 function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void;onShare?:(type:string,id:string)=>void}) {
   const [o,so]=useState(false);
   const [editing,setEditing]=useState(false);
@@ -416,63 +485,9 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
       {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
       {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
       {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
-      {isPpt&&<div className="pm pm-pptx" style={{width:'100%',background:'#fff',border:'2px solid #ea580c',borderRadius:10,padding:16}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
-            <div style={{width:34,height:34,borderRadius:8,background:'#ea580c',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>P</div>
-            <div>
-              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
-              <div style={{fontSize:11,color:'#ea580c',fontWeight:700}}>PowerPoint Presentation</div>
-            </div>
-          </div>
-          {doc.metadata?.extracted_text?<div>
-              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Slide Content Extracted</div>
-              <div style={{maxHeight:240,overflowY:'auto',background:'#fff7ed',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#431407',border:'1.5px solid #ffedd5',lineHeight:1.5}}>
-                {doc.metadata.extracted_text}
-              </div>
-            </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#fff7ed',borderRadius:8,border:'1px dashed #fdba74'}}>
-              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#ea580c'}}/>
-              <b style={{fontSize:13,color:'#9a3412'}}>Slide text ready to analyze</b>
-              <p style={{fontSize:11,color:'#c2410c',marginTop:2}}>Click "Analyze" to extract presentation slides into clean searchable text.</p>
-            </div>}
-        </div>}
-      {isDocx&&<div className="pm pm-docx" style={{width:'100%',background:'#fff',border:'2px solid #2563eb',borderRadius:10,padding:16}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
-            <div style={{width:34,height:34,borderRadius:8,background:'#2563eb',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>W</div>
-            <div>
-              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
-              <div style={{fontSize:11,color:'#2563eb',fontWeight:700}}>Word Document</div>
-            </div>
-          </div>
-          {doc.metadata?.extracted_text?<div>
-              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Document Content</div>
-              <div style={{maxHeight:240,overflowY:'auto',background:'#eff6ff',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#1e3a8a',border:'1.5px solid #dbeafe',lineHeight:1.5}}>
-                {doc.metadata.extracted_text}
-              </div>
-            </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#eff6ff',borderRadius:8,border:'1px dashed #93c5fd'}}>
-              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#2563eb'}}/>
-              <b style={{fontSize:13,color:'#1e40af'}}>Document content ready to analyze</b>
-              <p style={{fontSize:11,color:'#1d4ed8',marginTop:2}}>Click "Analyze" to extract document paragraphs & text.</p>
-            </div>}
-        </div>}
-      {isXlsx&&<div className="pm pm-xlsx" style={{width:'100%',background:'#fff',border:'2px solid #16a34a',borderRadius:10,padding:16}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:'1px solid #eee',paddingBottom:8}}>
-            <div style={{width:34,height:34,borderRadius:8,background:'#16a34a',color:'#fff',display:'flex',alignItems:'center',justify-content:'center',fontWeight:900,fontSize:15}}>X</div>
-            <div>
-              <b style={{fontSize:13,color:'#111'}}>{doc.filename}</b>
-              <div style={{fontSize:11,color:'#16a34a',fontWeight:700}}>Excel Spreadsheet</div>
-            </div>
-          </div>
-          {doc.metadata?.extracted_text?<div>
-              <div style={{fontSize:11,fontWeight:700,color:'#888',marginBottom:4,textTransform:'uppercase'}}>Spreadsheet Data Extracted</div>
-              <div style={{maxHeight:240,overflowY:'auto',background:'#f0fdf4',padding:12,borderRadius:8,fontSize:13,whiteSpace:'pre-wrap',color:'#14532d',border:'1.5px solid #dcfce7',lineHeight:1.5}}>
-                {doc.metadata.extracted_text}
-              </div>
-            </div>:<div style={{textAlign:'center',padding:'16px 10px',background:'#f0fdf4',borderRadius:8,border:'1px dashed #86efac'}}>
-              <FileText size={28} style={{margin:'0 auto 6px',display:'block',color:'#16a34a'}}/>
-              <b style={{fontSize:13,color:'#15803d'}}>Spreadsheet data ready to analyze</b>
-              <p style={{fontSize:11,color:'#166534',marginTop:2}}>Click "Analyze" to extract spreadsheet cells & tables.</p>
-            </div>}
-        </div>}
+      {isPpt&&<PptPreview doc={doc}/>}
+      {isDocx&&<DocxPreview doc={doc}/>}
+      {isXlsx&&<XlsxPreview doc={doc}/>}
       {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
       <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" download={doc.filename} onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open / Download</a></div></div>
     }
