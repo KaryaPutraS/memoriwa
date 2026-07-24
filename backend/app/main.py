@@ -49,6 +49,10 @@ async def _rate_limit_middleware(request: Request, call_next):
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": "Too many login attempts"}, status_code=429)
             bucket.append(now)
+    # Exempt media file requests, previews, and static assets from global rate limiter
+    if request.url.path.startswith("/api/files/") or request.url.path.startswith("/assets/") or request.method == "OPTIONS":
+        return await call_next(request)
+
     async with _rate_lock:
         bucket = _rate_buckets[key]
         bucket[:] = [t for t in bucket if now - t < _rate_window]
