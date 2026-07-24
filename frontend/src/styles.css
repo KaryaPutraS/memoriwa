@@ -59,3 +59,28 @@
   .fc-name{ font-size: 12px; }
   .fc-edit{ opacity: 1; }
 }
+
+/* Office Document Previews */
+.pm-pptx { width: 100%; background: #fff; border: 2px solid #ea580c; border-radius: 10px; padding: 16px; box-sizing: border-box; }
+.pm-pptx .pm-hdr { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+.pm-pptx .pm-badge { width: 34px; height: 34px; border-radius: 8px; background: #ea580c; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; flex-shrink: 0; }
+.pm-pptx .pm-title { font-size: 13px; color: #111; font-weight: bold; }
+.pm-pptx .pm-sub { font-size: 11px; color: #ea580c; font-weight: 700; }
+.pm-pptx .pm-txt { max-height: 240px; overflow-y: auto; background: #fff7ed; padding: 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; color: #431407; border: 1.5px solid #ffedd5; line-height: 1.5; }
+.pm-pptx .pm-empty { text-align: center; padding: 16px 10px; background: #fff7ed; border-radius: 8px; border: 1px dashed #fdba74; }
+
+.pm-docx { width: 100%; background: #fff; border: 2px solid #2563eb; border-radius: 10px; padding: 16px; box-sizing: border-box; }
+.pm-docx .pm-hdr { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+.pm-docx .pm-badge { width: 34px; height: 34px; border-radius: 8px; background: #2563eb; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; flex-shrink: 0; }
+.pm-docx .pm-title { font-size: 13px; color: #111; font-weight: bold; }
+.pm-docx .pm-sub { font-size: 11px; color: #2563eb; font-weight: 700; }
+.pm-docx .pm-txt { max-height: 240px; overflow-y: auto; background: #eff6ff; padding: 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; color: #1e3a8a; border: 1.5px solid #dbeafe; line-height: 1.5; }
+.pm-docx .pm-empty { text-align: center; padding: 16px 10px; background: #eff6ff; border-radius: 8px; border: 1px dashed #93c5fd; }
+
+.pm-xlsx { width: 100%; background: #fff; border: 2px solid #16a34a; border-radius: 10px; padding: 16px; box-sizing: border-box; }
+.pm-xlsx .pm-hdr { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+.pm-xlsx .pm-badge { width: 34px; height: 34px; border-radius: 8px; background: #16a34a; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; flex-shrink: 0; }
+.pm-xlsx .pm-title { font-size: 13px; color: #111; font-weight: bold; }
+.pm-xlsx .pm-sub { font-size: 11px; color: #16a34a; font-weight: 700; }
+.pm-xlsx .pm-txt { max-height: 240px; overflow-y: auto; background: #f0fdf4; padding: 12px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; color: #14532d; border: 1.5px solid #dcfce7; line-height: 1.5; }
+.pm-xlsx .pm-empty { text-align: center; padding: 16px 10px; background: #f0fdf4; border-radius: 8px; border: 1px dashed #86efac; }
