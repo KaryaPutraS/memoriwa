@@ -94,6 +94,27 @@ def test_caption_on_last_photo_groups_burst():
     assert d1['metadata']['explanation'] == 'Kegiatan gotong royong RT 05'
 
 
+def test_caption_on_first_photo_groups_subsequent_photos_in_burst():
+    """When Photo 1 carries a caption (e.g. WhatsApp album), subsequent photos
+    arriving without caption within the burst window automatically join Photo 1's group."""
+    h = _auth()
+    _nested_photo('alb1', sender='628999@c.us', body='Piket Senkom dan Pengecekan MSO')
+    import time; time.sleep(0.1)
+    _nested_photo('alb2', sender='628999@c.us')
+    _nested_photo('alb3', sender='628999@c.us')
+    
+    d1 = client.get('/api/documents/alb1', headers=h).json()
+    d2 = client.get('/api/documents/alb2', headers=h).json()
+    d3 = client.get('/api/documents/alb3', headers=h).json()
+    
+    gid = d1['metadata'].get('group_id')
+    assert gid is not None
+    assert d2['metadata'].get('group_id') == gid
+    assert d3['metadata'].get('group_id') == gid
+    assert d2['metadata'].get('explanation') == 'Piket Senkom dan Pengecekan MSO'
+    assert d3['metadata'].get('explanation') == 'Piket Senkom dan Pengecekan MSO'
+
+
 def test_photos_without_text_stay_ungrouped():
     """No follow-up text -> photos stay in the Inbox individually, as before."""
     h = _auth()

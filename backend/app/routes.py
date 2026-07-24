@@ -274,10 +274,31 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
     # burst — group this photo with the recent ungrouped images of the same
     # sender, exactly like a text message sent right after the photos.
     if is_img and caption:
+        meta = dict(doc.get("metadata") or {})
+        meta["caption_from_photo"] = True
+        doc["metadata"] = meta
+        await repo.update_document(did, doc)
+
         attached = await _attach_caption(repo, msg, caption, eid)
         for d in attached:
             await ws_manager.broadcast({"type": "document.updated", "data": d})
         asyncio.create_task(_ai_identify_burst(repo, attached, caption))
+    elif is_img and not caption:
+        # Auto-join recent burst from same sender if previous photo carried caption
+        recent_doc = await _find_recent_photo_caption_group(repo, sender, max_age_seconds=120)
+        if recent_doc:
+            rg_meta = recent_doc.get("metadata") or {}
+            gid = rg_meta.get("group_id")
+            expl = rg_meta.get("explanation")
+            ident = rg_meta.get("identity")
+            if gid:
+                meta = dict(doc.get("metadata") or {})
+                meta["group_id"] = gid
+                if expl: meta["explanation"] = expl
+                if ident: meta["identity"] = ident
+                doc["metadata"] = meta
+                await repo.update_document(did, doc)
+                await ws_manager.broadcast({"type": "document.updated", "data": doc})
 
     settings = await repo.get_settings() or {}
     # Images are not auto-analyzed: activity photos wait for their caption
@@ -298,16 +319,38 @@ async def webhook(payload: dict, secret: str | None = Query(None), x_webhook_sec
 CAPTION_WINDOW_MINUTES = 10  # hard outer lookback limit (safety net only)
 CAPTION_BURST_GAP_SECONDS = int(os.getenv("CAPTION_BURST_GAP_SEC", "120"))
 
+async def _find_recent_photo_caption_group(repo, sender: str, max_age_seconds: int = 120) -> dict | None:
+    """Find the most recent photo group created by a photo carrying a caption from the same sender."""
+    if not sender:
+        return None
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+    result = await repo.get_documents(limit=100)
+    for d in result["items"]:
+        if d.get("sender") != sender:
+            continue
+        if not str(d.get("mime_type") or "").startswith("image/"):
+            continue
+        if d.get("status") == "analyzed":
+            continue
+        meta = d.get("metadata") or {}
+        if not meta.get("group_id") or not meta.get("caption_from_photo"):
+            continue
+        try:
+            ts = datetime.fromisoformat(str(d.get("created_at")))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                return d
+        except Exception:
+            continue
+    return None
+
 async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
     """Attach a text message as explanation to the LATEST photo burst from
     the same sender.
 
     A burst = consecutive ungrouped images where each arrived within
-    CAPTION_BURST_GAP_SECONDS of the previous one. This keeps different
-    activities separate even inside the outer 10-minute window: photos A,
-    text A, photos B, text B — each text only explains its own burst, and
-    an older burst is never swallowed by a newer explanation. Photos with
-    no follow-up text simply stay ungrouped in the Inbox (the fallback).
+    CAPTION_BURST_GAP_SECONDS of the previous one.
     """
     sender = str(msg.get("from") or msg.get("author") or msg.get("sender") or "") if isinstance(msg, dict) else ""
     if "@" in sender:
@@ -339,9 +382,6 @@ async def _attach_caption(repo, msg: dict, body: str, eid: str) -> list[dict]:
     if not cands:
         return []
     cands.sort(key=lambda x: x[0])
-    # Keep only the newest contiguous burst: walk backwards from the latest
-    # photo while the gap between consecutive photos is small enough to be
-    # one activity. A larger gap marks an older, separate burst.
     burst: list[tuple[datetime, dict]] = [cands[-1]]
     for prev in reversed(cands[:-1]):
         gap = (burst[0][0] - prev[0]).total_seconds()
