@@ -386,10 +386,10 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
       {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
       {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
       {doc.metadata?.extracted_text&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Extracted Content:</span>{doc.metadata.extracted_text.slice(0,800)}{doc.metadata.extracted_text.length>800?'…':''}</div></div>}
-      {im&&pv&&<div className="pm"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
-      {pd&&pv&&<div className="pm" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'380px',border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
-      {isVid&&pv&&<div className="pm" style={{width:'100%'}}><video src={pv} controls style={{maxWidth:'100%',maxHeight:360,borderRadius:8}}/></div>}
-      {isAud&&pv&&<div className="pm" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%',marginTop:8}}/></div>}
+      {im&&pv&&<div className="pm pm-img"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
+      {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
+      {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
+      {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
       {!im&&!pd&&!isVid&&!isAud&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
       <div className="pa"><button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button><a className="btn sm" href={pv||'#'} target="_blank" rel="noopener" download={doc.filename} onClick={e=>{if(!pv)e.preventDefault();}}><Share2 size={12}/> Open / Download</a></div></div>
     }
