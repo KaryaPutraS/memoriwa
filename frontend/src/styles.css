@@ -23,6 +23,23 @@
 .fc-edit{opacity:0;transition:.12s;width:28px;height:28px}
 .fcard:hover .fc-edit{opacity:1}
 
+/* Document Grid Layout (Kotak) */
+.doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;padding:16px}
+.fcard-doc{background:#fff;border:2.5px solid #d5d5d5;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px;cursor:pointer;transition:.12s;position:relative}
+.fcard-doc:hover{border-color:#13131f;transform:translateY(-2px);box-shadow:3px 4px 0 #ddd}
+.fc-top{display:flex;align-items:center;justify-content:space-between;width:100%}
+.fc-preview{height:100px;width:100%;border-radius:10px;background:#f8fafc;border:1.5px solid #e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.fc-thumb{width:100%;height:100%;object-fit:cover}
+.fc-icon-pptx{width:42px;height:42px;border-radius:10px;background:#ea580c;color:#fff;font-weight:900;font-size:20px;display:flex;align-items:center;justify-content:center}
+.fc-icon-docx{width:42px;height:42px;border-radius:10px;background:#2563eb;color:#fff;font-weight:900;font-size:20px;display:flex;align-items:center;justify-content:center}
+.fc-icon-xlsx{width:42px;height:42px;border-radius:10px;background:#16a34a;color:#fff;font-weight:900;font-size:20px;display:flex;align-items:center;justify-content:center}
+.fc-title{font-weight:800;font-size:13px;color:#13131f;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fc-sub{font-size:11px;color:#888}
+@media (max-width: 640px) {
+  .doc-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;padding:10px}
+  .fc-preview{height:80px}
+}
+
 /* Mobile & Responsive UI/UX Enhancements */
 @media (max-width: 768px) {
   .pg { padding: 12px 10px; gap: 12px; }

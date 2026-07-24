@@ -460,33 +460,41 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
     <div className="dr" onClick={()=>so(!o)}>
       <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
       <div className="di">{im&&pv?<img src={pv} className="tt" alt=""/>:im?<Image size={17}/>:pd?<FileIcon size={17}/>:<FileText size={17}/>}</div>
-      <div className="dn"><div className="dnm">{doc.metadata?.identity?.title||doc.metadata?.explanation||doc.filename||'Untitled'}</div><div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div>
-      {!!tags.length&&<div className="tchips">{tags.map(t=><span key={t} className="tchip">{t}</span>)}</div>}</div>
+      <div className="dn">
+        <div className="dnm">{doc.metadata?.identity?.title||doc.metadata?.explanation||doc.filename||'Untitled'}</div>
+        <div className="dnt">{doc.sender} · {doc.created_at?new Date(doc.created_at).toLocaleDateString():''}{doc.metadata?.folder?' · '+doc.metadata.folder:doc.metadata?.identity?.doc_type?' · '+doc.metadata.identity.doc_type:''}</div>
+      </div>
       {typeof doc.metadata?.relevance_score==='number'&&doc.metadata.relevance_score>0&&<span className="ds" style={{background:'#00d4aa18',color:'#00d4aa',borderColor:'#00d4aa'}}>{Math.round(doc.metadata.relevance_score*100)}% match</span>}
       <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}{doc.status==='processing'&&typeof doc.metadata?.progress==='number'?` ${doc.metadata.progress}%`:''}</span>
-      {onShare&&<button className="bi" title="Share public link" onClick={e=>{e.stopPropagation();onShare('document',doc.id)}}><Share2 size={13}/></button>}
-      {onIdentify&&!!(doc.metadata?.explanation||doc.metadata?.caption)&&<button className="bi" title="AI: extract keywords as identity" onClick={e=>{e.stopPropagation();onIdentify(doc.id)}}><Wand2 size={13}/></button>}
-      <button className="bi" title="Analyze" onClick={e=>{e.stopPropagation();analyze()}}><Sparkles size={13}/></button>
-      {onEdit&&<button className="bi" title="Edit" onClick={e=>{e.stopPropagation();startEdit()}}><Pencil size={13}/></button>}
-      {del&&<button className="bi" title="Delete" onClick={e=>{e.stopPropagation();del()}}><Trash2 size={13}/></button>}
       <ChevronRight size={15} className={`dc ${o?'rt':''}`}/>
     </div>
-    {o&&<div className="dp"><div className="dg"><div className="dp-info"><b>{doc.filename}</b>
-      <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div><div className="ir"><span>From:</span>{doc.sender}</div><div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div></div>
-      {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
-      {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
-      {im&&pv&&<div className="pm pm-img"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
-      {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
-      {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
-      {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
-      {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
-      {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}</div>
+    {o&&<div className="dp">
+      {!!tags.length&&<div className="tchips" style={{marginBottom:8}}>{tags.map(t=><span key={t} className="tchip">{t}</span>)}</div>}
+      <div className="dg">
+        <div className="dp-info"><b>{doc.filename}</b>
+          <div className="ir"><span>Type:</span>{doc.mime_type||'?'}</div>
+          <div className="ir"><span>From:</span>{doc.sender}</div>
+          <div className="ir"><span>Size:</span>{doc.metadata?.size?(doc.metadata.size/1024).toFixed(1)+' KB':'?'}</div>
+        </div>
+        {doc.metadata?.identity&&<div className="dp-info"><div className="ir"><span>Summary:</span>{doc.metadata.identity.summary||'-'}</div><div className="ir"><span>Tags:</span>{(doc.metadata.identity.tags||[]).join(', ')||'-'}</div></div>}
+        {doc.metadata?.explanation&&<div className="dp-info"><div className="ir" style={{whiteSpace:'pre-wrap'}}><span>Report:</span>{doc.metadata.explanation}</div></div>}
+        {im&&pv&&<div className="pm pm-img"><img src={pv} alt={doc.filename} className="pi" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/></div>}
+        {pd&&pv&&<div className="pm pm-pdf" style={{width:'100%'}}><iframe src={pv} style={{width:'100%',height:'100%',minHeight:360,border:'1px solid #333',borderRadius:8,background:'#fff'}} title={doc.filename}/></div>}
+        {isVid&&pv&&<div className="pm pm-video" style={{width:'100%'}}><video src={pv} controls style={{width:'100%',maxHeight:360,borderRadius:8}}/></div>}
+        {isAud&&pv&&<div className="pm pm-audio" style={{width:'100%'}}><audio src={pv} controls style={{width:'100%'}}/></div>}
+        {(isPpt||isDocx||isXlsx)&&<div className="pm pm-office" style={{width:'100%'}}><iframe src={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} style={{width:'100%',height:380,border:'1px solid #334155',borderRadius:10,background:'#0f172a'}} title={doc.filename}/></div>}
+        {!im&&!pd&&!isVid&&!isAud&&!isPpt&&!isDocx&&!isXlsx&&!doc.metadata?.extracted_text&&<div className="pm pfc"><FileText size={32}/><b>File</b><span>{doc.mime_type}</span></div>}
+      </div>
       <div className="pa">
         <button className="btn sm" onClick={analyze}><Sparkles size={12}/> Analyze</button>
+        {onEdit&&<button className="btn sm" onClick={startEdit}><Pencil size={12}/> Edit</button>}
+        {onIdentify&&!!(doc.metadata?.explanation||doc.metadata?.caption)&&<button className="btn sm" onClick={()=>onIdentify(doc.id)}><Wand2 size={12}/> AI Identify</button>}
+        {onShare&&<button className="btn sm" onClick={()=>onShare('document',doc.id)}><Share2 size={12}/> Share</button>}
         <a className="btn sm" href={`/api/files/${doc.id}/view?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener"><Share2 size={12}/> Open Preview</a>
         <a className="btn sm" href={pv||`/api/files/${doc.id}/raw?token=${encodeURIComponent(getToken()||'')}`} target="_blank" rel="noopener" download={doc.filename}><FolderInput size={12}/> Download File</a>
-      </div></div>
-    }
+        {del&&<button className="btn sm" style={{color:'#f2504b',borderColor:'#f2504b'}} onClick={del}><Trash2 size={12}/> Delete</button>}
+      </div>
+    </div>}
     {editing&&onEdit&&<div className="dp"><div className="p4 s3">
       <div className="fi"><label>Title</label><input className="inp" value={etitle} onChange={e=>setEtitle(e.target.value)}/></div>
       <div className="fi"><label>Folder</label><input className="inp" list="dl-folders" value={efolder} onChange={e=>setEfolder(e.target.value)} placeholder="mis. dokumentasi kegiatan"/></div>
@@ -499,12 +507,43 @@ function DocRow({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{
     </div>;
 }
 
+function DocCard({doc,sel,toggle,analyze,del,onEdit,folders,onIdentify,onShare}:{doc:Doc;sel:string[];toggle:(id:string)=>void;analyze:()=>void;del?:()=>void;onEdit?:(id:string,patch:any)=>void;folders?:string[];onIdentify?:(id:string)=>void;onShare?:(type:string,id:string)=>void}) {
+  const [o,so]=useState(false);
+  const mime=(doc.mime_type||'').toLowerCase();
+  const fname=(doc.filename||'').toLowerCase();
+  const im=mime.startsWith('image/')||/\.(jpg|jpeg|png|webp|gif|svg)$/i.test(fname);
+  const pd=mime==='application/pdf'||fname.endsWith('.pdf');
+  const isVid=mime.startsWith('video/')||/\.(mp4|webm|mov|mkv)$/i.test(fname);
+  const isAud=mime.startsWith('audio/')||/\.(mp3|wav|ogg|m4a)$/i.test(fname);
+  const isPpt=mime.includes('presentationml')||/\.(pptx|ppt)$/i.test(fname);
+  const isDocx=mime.includes('wordprocessingml')||/\.(docx|doc)$/i.test(fname);
+  const isXlsx=mime.includes('spreadsheetml')||/\.(xlsx|xls|csv)$/i.test(fname);
+  const pv=useAuthFileUrl(doc.id, im||pd||isVid||isAud||o);
+  const cl=SC[doc.status]||'#999';
+
+  return <div className="fcard-doc">
+    <div className="fc-top" onClick={()=>so(!o)}>
+      <input type="checkbox" checked={sel.includes(doc.id)} onChange={e=>{e.stopPropagation();toggle(doc.id)}} onClick={e=>e.stopPropagation()}/>
+      <span className="ds" style={{background:cl+'18',color:cl,borderColor:cl}}>{doc.status}</span>
+    </div>
+    <div className="fc-preview" onClick={()=>so(!o)}>
+      {im&&pv?<img src={pv} alt="" className="fc-thumb"/>:isPpt?<div className="fc-icon-pptx">P</div>:isDocx?<div className="fc-icon-docx">W</div>:isXlsx?<div className="fc-icon-xlsx">X</div>:pd?<FileIcon size={32} color="#ea580c"/>:<FileText size={32} color="#94a3b8"/>}
+    </div>
+    <div className="fc-title" onClick={()=>so(!o)}>{doc.metadata?.identity?.title||doc.filename||'Untitled'}</div>
+    <div className="fc-sub" onClick={()=>so(!o)}>{doc.sender}</div>
+    {o&&<div style={{marginTop:8,width:'100%'}} onClick={e=>e.stopPropagation()}>
+      <DocRow doc={doc} sel={sel} toggle={toggle} analyze={analyze} del={del} onEdit={onEdit} folders={folders} onIdentify={onIdentify} onShare={onShare}/>
+    </div>}
+  </div>;
+}
+
 function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,identify}:{docs:Doc[];refreshDocs?:()=>void;flash?:(msg:string)=>void;analyze:(id:string)=>void;del:(id:string)=>void;editDoc:(id:string,patch:any)=>void;moveDocs:(ids:string[],folder:string)=>void;renameF:(oldN:string,newN:string)=>void;identify:(id:string)=>void}) {
   const [q,sq]=useState(''),[folder,setFolder]=useState('');
   const [sel,ssel]=useState<string[]>([]);
   const [renaming,setRenaming]=useState(''),[rname,setRname]=useState('');
   const [mopen,setMopen]=useState(false),[mtarget,setMtarget]=useState('');
   const [folderView, setFolderView] = useState<'grid'|'list'>('grid');
+  const [fileView, setFileView] = useState<'grid'|'list'>('list');
   const toggle=(id:string)=>ssel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
   const GENERIC=['','other','unknown','uncategorized','document','dokumen','file','general','lainnya','misc'];
   const folderOf=(d:Doc)=>{
@@ -587,11 +626,25 @@ function FilesPage({docs,refreshDocs,flash,analyze,del,editDoc,moveDocs,renameF,
           <ChevronRight size={13}/></div>)
       )}
     </div>}
-    {(folder||ql)&&<div className="cd"><div className="cd-hd"><b>{folder||'Search results'} ({list.length})</b>
-      {list.length>0&&<button className="btn sm" onClick={()=>{const ids=list.map(d=>d.id);ssel(sel.length===ids.length?[]:ids)}}>{sel.length===list.length?'Unselect all':'Select all'}</button>}
-    </div>
+    {(folder||ql)&&<div className="cd">
+      <div className="cd-hd">
+        <b>{folder||'Search results'} ({list.length})</b>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div className="cs" style={{gap:4}}>
+            <button className={`ch ${fileView==='grid'?'on':''}`} onClick={()=>setFileView('grid')} title="Grid View (Kotak)"><LayoutGrid size={13}/> Grid</button>
+            <button className={`ch ${fileView==='list'?'on':''}`} onClick={()=>setFileView('list')} title="List View (Kebawah)"><List size={13}/> List</button>
+          </div>
+          {list.length>0&&<button className="btn sm" onClick={()=>{const ids=list.map(d=>d.id);ssel(sel.length===ids.length?[]:ids)}}>{sel.length===list.length?'Unselect all':'Select all'}</button>}
+        </div>
+      </div>
       {list.length===0?<div className="em"><FileText size={32}/><b>No files found</b></div>
-      :list.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onEdit={editDoc} folders={allNames} onIdentify={identify}/>)}
+      :fileView==='grid'?(
+        <div className="doc-grid">
+          {list.map(d=><DocCard key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onEdit={editDoc} folders={allNames} onIdentify={identify}/>)}
+        </div>
+      ):(
+        list.map(d=><DocRow key={d.id} doc={d} sel={sel} toggle={toggle} analyze={()=>analyze(d.id)} del={()=>del(d.id)} onEdit={editDoc} folders={allNames} onIdentify={identify}/>)
+      )}
     </div>}
   </div>;
 }
