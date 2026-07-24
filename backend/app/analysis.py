@@ -198,22 +198,23 @@ async def _ocr_image_groq(image_bytes: bytes, mime: str, cfg: dict) -> str:
     }], max_tokens=4096)
 
 
-def office_text(data: bytes, mime: str) -> str:
+def office_text(data: bytes, mime: str, filename: str = "") -> str:
     """Dependency-free text extraction from OOXML files (docx/pptx/xlsx)."""
     import zipfile, io, re, html
+    fname = filename.lower()
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except Exception:
         return ""
-    if "wordprocessingml" in mime:
+    if "wordprocessingml" in mime or fname.endswith(".docx"):
         names = [n for n in zf.namelist() if n == "word/document.xml"]
         tag = "w:t"
-    elif "presentationml" in mime:
+    elif "presentationml" in mime or fname.endswith(".pptx"):
         names = sorted(n for n in zf.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
         tag = "a:t"
-    elif "spreadsheetml" in mime:
-        names = [n for n in zf.namelist() if n == "xl/sharedStrings.xml"]
-        tag = "t"
+    elif "spreadsheetml" in mime or fname.endswith(".xlsx"):
+        names = [n for n in zf.namelist() if n == "xl/sharedStrings.xml" or re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)]
+        tag = "(?:t|v)"
     else:
         return ""
     pat = re.compile(rf"<{tag}(?:\s[^>]*)?>(.*?)</{tag}>", re.S)
@@ -229,9 +230,10 @@ def office_text(data: bytes, mime: str) -> str:
     return "\n\n".join(parts).strip()
 
 
-async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, str]:
+async def extract_text(data: bytes, mime: str, cfg: dict | None, filename: str = "") -> tuple[str, str]:
     """Returns (text, method). Never raises on OCR failure — returns what it got."""
-    if mime == "application/pdf":
+    fname = filename.lower()
+    if mime == "application/pdf" or fname.endswith(".pdf"):
         text = pdf_text_layer(data)
         if len(text) >= MIN_TEXT_LAYER:
             return text, "pdf-text"
@@ -245,7 +247,7 @@ async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, s
             except Exception as e:
                 logger.warning("Groq vision OCR failed, falling back to tesseract: %s", e)
         return "\n\n".join(_tesseract(p) for p in pages), "tesseract"
-    if mime.startswith("image/"):
+    if mime.startswith("image/") or any(fname.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]):
         if cfg:
             try:
                 text = await _ocr_image_groq(data, mime, cfg)
@@ -254,9 +256,14 @@ async def extract_text(data: bytes, mime: str, cfg: dict | None) -> tuple[str, s
             except Exception as e:
                 logger.warning("Groq vision OCR failed, falling back to tesseract: %s", e)
         return _tesseract(data), "tesseract"
-    if "officedocument" in mime:
-        text = office_text(data, mime)
+    if "officedocument" in mime or any(fname.endswith(ext) for ext in [".docx", ".xlsx", ".pptx"]):
+        text = office_text(data, mime, filename)
         return (text, "office-text") if text else ("", "unsupported")
+    if mime.startswith("text/") or any(fname.endswith(ext) for ext in [".txt", ".csv", ".tsv", ".json", ".xml", ".html", ".md", ".log", ".yaml", ".yml"]):
+        try:
+            return data.decode("utf-8", "ignore").strip(), "plain-text"
+        except Exception:
+            pass
     return "", "unsupported"
 
 
@@ -379,7 +386,7 @@ async def analyze_document(doc: dict, waha, repo, on_update=None) -> dict:
         if not data:
             raise RuntimeError("file bytes unavailable")
         await _progress(35)
-        text, method = await extract_text(data, doc.get("mime_type", ""), ocr_cfg)
+        text, method = await extract_text(data, doc.get("mime_type", ""), ocr_cfg, doc.get("filename", ""))
         meta["extraction_method"] = method
         meta["extracted_text"] = text[:MAX_STORED_TEXT]
         if not text.strip():
